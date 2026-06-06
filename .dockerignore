@@ -1,0 +1,15 @@
+node_modules
+dist
+.reddix-data
+.git
+.github
+tests
+playwright-report
+test-results
+*.log
+.DS_Store
+.claude
+.codegraph
+.harness
+out
+coverage

@@ -10,8 +10,13 @@ const staticDir = process.env.REDDIX_STATIC_DIR ?? path.join(process.cwd(), 'dis
 
 const { app, closeClients } = createApp({ storage, dataDir, staticDir });
 
-const server = app.listen(port, '127.0.0.1', () => {
-  console.log(`Reddix backend listening on http://127.0.0.1:${port}`);
+// Bind to loopback by default (local single-user). Set HOST=0.0.0.0 only for
+// containerized runs where the port is mapped back to the host; CORS allowlist
+// and the CSRF guard still constrain cross-origin access.
+const host = process.env.HOST ?? '127.0.0.1';
+
+const server = app.listen(port, host, () => {
+  console.log(`Reddix backend listening on http://${host}:${port}`);
 });
 
 let shuttingDown = false;
