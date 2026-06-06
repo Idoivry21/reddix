@@ -57,7 +57,8 @@ function emptyConsoleState(): ConsoleState {
     runLabel: 'No runs yet',
     steps: [],
     logs: ['Ready. Press Run Now to execute the flow.'],
-    results: []
+    results: [],
+    history: []
   };
 }
 

@@ -7,6 +7,19 @@ export interface ConsoleRunStep {
   sublabel: string;
   status: 'success' | 'failed' | 'skipped' | 'running';
   duration: string;
+  /** Redacted displayArgv for CLI steps; undefined for local steps. */
+  argv?: string[];
+  exitCode?: number | null;
+  stdoutSummary?: string;
+  error?: string | null;
+}
+
+export interface ConsoleHistoryEntry {
+  id: string;
+  status: 'success' | 'failed' | 'skipped' | 'running';
+  startedAt: string;
+  steps: number;
+  error: string | null;
 }
 
 export interface ConsoleState {
@@ -15,6 +28,7 @@ export interface ConsoleState {
   steps: ConsoleRunStep[];
   logs: string[];
   results: Array<Record<string, string | number | null>>;
+  history: ConsoleHistoryEntry[];
   runLabel: string;
 }
 

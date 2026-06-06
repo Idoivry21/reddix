@@ -1,6 +1,8 @@
-import type { ConsoleRunStep, ConsoleState } from './api';
+import type { ConsoleHistoryEntry, ConsoleRunStep, ConsoleState } from './api';
 import { getBlockSpec } from './shared/commandBuilders';
 import type { RunRecord, RunStep } from './shared/types';
+
+const MAX_HISTORY_ENTRIES = 50;
 
 /**
  * Maps a backend RunRecord onto the console view model. The record only carries
@@ -19,7 +21,18 @@ export function runRecordToConsoleState(
     runLabel: `Run ${run.startedAt}`,
     steps: run.steps.map((step) => toConsoleStep(step, nodeTypeById[step.blockId])),
     logs: buildLogs(run),
-    results: []
+    results: [],
+    history: [toHistoryEntry(run), ...(prev.history ?? [])].slice(0, MAX_HISTORY_ENTRIES)
+  };
+}
+
+function toHistoryEntry(run: RunRecord): ConsoleHistoryEntry {
+  return {
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    steps: run.steps.length,
+    error: run.error
   };
 }
 
@@ -34,7 +47,11 @@ function toConsoleStep(step: RunStep, blockType: string | undefined): ConsoleRun
     label: descriptor.label,
     sublabel: descriptor.sublabel,
     status: step.status,
-    duration: formatDuration(step.startedAt, step.endedAt)
+    duration: formatDuration(step.startedAt, step.endedAt),
+    argv: step.argv,
+    exitCode: step.exitCode,
+    stdoutSummary: step.stdoutSummary,
+    error: step.error
   };
 }
 
