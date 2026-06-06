@@ -8,7 +8,7 @@ import { checkExecutable, cliExecutor } from './executor';
 import { runFlow } from './runEngine';
 import { createScheduler } from './scheduler';
 import { formatZodError, parseFlowPutBody, parseRunPostBody } from './schemas';
-import { isSafeId } from './safeId';
+import { isSafeId, resolveContainedPath } from './safeId';
 import type { PersistedFlow, RunRecord } from './types';
 
 interface RoutesOptions {
@@ -125,7 +125,7 @@ export function createRoutes(options: RoutesOptions) {
     response.json({ ok: true });
   });
 
-  router.get('/events', (request, response) => {
+  const eventsHandler: express.RequestHandler = (request, response) => {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -137,7 +137,7 @@ export function createRoutes(options: RoutesOptions) {
     request.on('close', () => {
       clients.delete(id);
     });
-  });
+  };
 
   async function runAndStore(flowId: string): Promise<RunRecord> {
     const flow = await options.storage.getFlow(flowId);
@@ -172,12 +172,13 @@ export function createRoutes(options: RoutesOptions) {
     clients.clear();
   }
 
-  return { router, closeClients };
+  return { router, eventsHandler, closeClients };
 }
 
 function writeArtifact(dataDir: string) {
+  const artifactsDir = path.join(dataDir, 'artifacts');
   return async (filePath: string, contents: string): Promise<{ path: string; bytes: number }> => {
-    const safePath = path.join(dataDir, 'artifacts', filePath);
+    const safePath = resolveContainedPath(artifactsDir, filePath);
     await mkdir(path.dirname(safePath), { recursive: true });
     await writeFile(safePath, contents);
     return { path: filePath, bytes: Buffer.byteLength(contents) };
@@ -213,4 +214,3 @@ function skippedRun(flowId: string): RunRecord {
     error: 'Skipped because a previous run is still in flight'
   };
 }
-

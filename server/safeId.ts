@@ -37,6 +37,23 @@ export function assertSafeId(id: unknown): string {
 }
 
 /**
+ * Resolve `relativePath` against `baseDir` and assert the result stays inside
+ * `baseDir`. Throws on any path that escapes (e.g. `../`, absolute paths).
+ * Used for export artifacts whose names come from user-controlled settings.
+ */
+export function resolveContainedPath(baseDir: string, relativePath: string): string {
+  if (typeof relativePath !== 'string' || relativePath.length === 0 || relativePath.includes('\0')) {
+    throw new Error('Invalid path');
+  }
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(resolvedBase, relativePath);
+  if (resolvedTarget !== resolvedBase && !resolvedTarget.startsWith(resolvedBase + path.sep)) {
+    throw new Error(`Invalid path: ${JSON.stringify(relativePath)} escapes the base directory`);
+  }
+  return resolvedTarget;
+}
+
+/**
  * Build `<dir>/<id><suffix>` after validating the id, then assert the resolved
  * path stays inside the resolved base dir. Belt-and-suspenders: even a gap in
  * the id validator cannot let a path escape the data directory.
