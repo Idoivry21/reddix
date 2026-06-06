@@ -1,10 +1,12 @@
 import type { Node } from '@xyflow/react';
 
+export type NodeStatus = 'idle' | 'pending' | 'running' | 'success' | 'error';
+
 export interface WorkbenchNodeData extends Record<string, unknown> {
   blockType: string;
   label: string;
   settings: Record<string, unknown>;
-  status: 'idle' | 'success' | 'warning';
+  status: NodeStatus;
 }
 
 export type WorkbenchNode = Node<WorkbenchNodeData, 'workbenchBlock'>;

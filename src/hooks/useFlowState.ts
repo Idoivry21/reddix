@@ -4,7 +4,7 @@ import { MarkerType, useEdgesState, useNodesState } from '@xyflow/react';
 import { buildBlockCommand, getDefaultSettings, previewCommand } from '../shared/commandBuilders';
 import { validateFlow } from '../shared/graph';
 import { postRun, saveFlow, subscribeRunEvents, type ConsoleState } from '../api';
-import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type WorkbenchNode } from '../flowTypes';
+import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type NodeStatus, type WorkbenchNode } from '../flowTypes';
 import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
 import { runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
 
@@ -18,12 +18,12 @@ const edgeDefaults = {
 
 export function createStarterNodes(): WorkbenchNode[] {
   return [
-    node('search', 'reddit.searchPosts', 'Search Reddit', { x: 80, y: 90 }, 'success'),
-    node('filter', 'transform.filterText', 'Filter Text', { x: 390, y: 90 }, 'success'),
-    node('export-json', 'output.exportJson', 'Export JSON', { x: 710, y: 90 }, 'success'),
-    node('twitter-search', 'twitter.searchTweets', 'Search Tweets', { x: 80, y: 315 }, 'success'),
-    node('engagement', 'transform.engagementFilter', 'Engagement Filter', { x: 390, y: 315 }, 'success'),
-    node('export-csv', 'output.exportCsv', 'Export CSV', { x: 710, y: 315 }, 'success')
+    node('search', 'reddit.searchPosts', 'Search Reddit', { x: 80, y: 90 }, 'idle'),
+    node('filter', 'transform.filterText', 'Filter Text', { x: 390, y: 90 }, 'idle'),
+    node('export-json', 'output.exportJson', 'Export JSON', { x: 710, y: 90 }, 'idle'),
+    node('twitter-search', 'twitter.searchTweets', 'Search Tweets', { x: 80, y: 315 }, 'idle'),
+    node('engagement', 'transform.engagementFilter', 'Engagement Filter', { x: 390, y: 315 }, 'idle'),
+    node('export-csv', 'output.exportCsv', 'Export CSV', { x: 710, y: 315 }, 'idle')
   ];
 }
 
@@ -115,6 +115,17 @@ export function useWorkbenchState() {
     return selectedCommand ? previewCommand(selectedCommand) : 'Local transform block';
   }, [selectedCommand]);
 
+  const setNodeStatus = useCallback(
+    (nodeId: string, status: WorkbenchNode['data']['status']) => {
+      setNodes((current) =>
+        current.map((item) =>
+          item.id === nodeId ? { ...item, data: { ...item.data, status } } : item
+        )
+      );
+    },
+    [setNodes]
+  );
+
   // Live run-step updates over SSE.
   useEffect(() => {
     if (typeof EventSource === 'undefined') {
@@ -127,14 +138,16 @@ export function useWorkbenchState() {
         }
         const consoleStep = runStepToConsoleStep(step, nodeTypeMap(nodesRef.current)[step.blockId]);
         setConsoleState((current) => ({ ...current, steps: upsertStep(current.steps, consoleStep) }));
+        setNodeStatus(step.blockId, nodeStatusFromStep(step.status));
       },
       onComplete: ({ run }) => {
         const nodeTypeById = nodeTypeMap(nodesRef.current);
         setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeById));
+        setNodes((current) => applyRunStatuses(current, run));
       }
     });
     return unsubscribe;
-  }, []);
+  }, [setNodeStatus, setNodes]);
 
   const runNow = useCallback(async () => {
     const model = toFlowModel(nodes, edges);
@@ -153,6 +166,7 @@ export function useWorkbenchState() {
     setIsRunning(true);
     setValidationMessage('Running flow…');
     setConsoleState((current) => ({ ...current, activeTab: 'Logs', logs: ['Run started…'] }));
+    setNodes((current) => current.map((item) => ({ ...item, data: { ...item.data, status: 'pending' } })));
 
     try {
       const body = toFlowRequestBody(nodes, edges, {
@@ -163,6 +177,7 @@ export function useWorkbenchState() {
       await saveFlow(DEFAULT_FLOW_ID, body);
       const run = await postRun(DEFAULT_FLOW_ID);
       setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeMap(nodes)));
+      setNodes((current) => applyRunStatuses(current, run));
       setValidationMessage(run.status === 'success' ? 'Run completed' : 'Run finished with errors');
       setLastSavedAt(run.status === 'success' ? 'Run completed' : 'Run finished with errors');
     } catch (error) {
@@ -202,6 +217,25 @@ export function useWorkbenchState() {
 
 function nodeTypeMap(nodes: WorkbenchNode[]): Record<string, string> {
   return Object.fromEntries(nodes.map((item) => [item.id, item.data.blockType]));
+}
+
+function nodeStatusFromStep(status: 'success' | 'failed' | 'skipped' | 'running'): NodeStatus {
+  if (status === 'failed') {
+    return 'error';
+  }
+  if (status === 'skipped') {
+    return 'idle';
+  }
+  return status === 'running' ? 'running' : 'success';
+}
+
+/** Reset to idle, then apply each run step's final status to its node. */
+function applyRunStatuses(nodes: WorkbenchNode[], run: { steps: Array<{ blockId: string; status: 'success' | 'failed' | 'skipped' | 'running' }> }): WorkbenchNode[] {
+  const byId = new Map(run.steps.map((step) => [step.blockId, nodeStatusFromStep(step.status)]));
+  return nodes.map((item) => {
+    const next = byId.get(item.id) ?? 'idle';
+    return item.data.status === next ? item : { ...item, data: { ...item.data, status: next } };
+  });
 }
 
 function upsertStep(steps: ConsoleState['steps'], next: ConsoleState['steps'][number]): ConsoleState['steps'] {
