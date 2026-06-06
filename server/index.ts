@@ -1,25 +1,14 @@
-import express from 'express';
-import cors from 'cors';
-import { buildCorsOptions } from './cors';
-import { csrfGuard } from './csrfGuard';
+import path from 'node:path';
+import { createApp } from './app';
 import { validateEnv, summarizeAuthPresence } from './env';
-import { errorHandler } from './errorHandler';
-import { createRoutes } from './routes';
 import { createStorage } from './storage';
 
-const app = express();
 const { port, dataDir } = validateEnv(process.env);
 console.log(`[reddix] auth tokens: ${summarizeAuthPresence(process.env)}`);
 const storage = createStorage({ baseDir: dataDir });
+const staticDir = process.env.REDDIX_STATIC_DIR ?? path.join(process.cwd(), 'dist');
 
-const { router, eventsHandler, closeClients } = createRoutes({ storage, dataDir });
-
-app.use(cors(buildCorsOptions(process.env)));
-app.use(csrfGuard);
-app.use(express.json({ limit: '2mb' }));
-app.get('/events', eventsHandler);
-app.use('/api', router);
-app.use(errorHandler);
+const { app, closeClients } = createApp({ storage, dataDir, staticDir });
 
 const server = app.listen(port, '127.0.0.1', () => {
   console.log(`Reddix backend listening on http://127.0.0.1:${port}`);
