@@ -32,12 +32,24 @@ export interface ConsoleState {
   runLabel: string;
 }
 
-export async function fetchHealth() {
+export interface ProviderHealth {
+  provider: string;
+  executable: string;
+  available: boolean;
+}
+
+export interface HealthResponse {
+  ok: boolean;
+  app: string;
+  providers: ProviderHealth[];
+}
+
+export async function fetchHealth(): Promise<HealthResponse> {
   const response = await fetch('/api/health');
   if (!response.ok) {
     throw new Error('Backend health check failed');
   }
-  return response.json();
+  return (await response.json()) as HealthResponse;
 }
 
 export async function saveFlow(flowId: string, body: FlowRequestBody): Promise<PersistedFlow> {

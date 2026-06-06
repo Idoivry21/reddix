@@ -4,13 +4,22 @@ import { ConsolePanel } from './components/ConsolePanel';
 import { Inspector } from './components/Inspector';
 import { TopBar } from './components/TopBar';
 import { useWorkbenchState } from './hooks/useFlowState';
+import { useProviderHealth } from './hooks/useProviderHealth';
 
 export function App() {
   const workbench = useWorkbenchState();
+  const health = useProviderHealth();
 
   return (
     <main className="workbench-shell">
-      <TopBar lastSavedAt={workbench.lastSavedAt} onRun={workbench.runNow} isRunning={workbench.isRunning} />
+      <TopBar
+        lastSavedAt={workbench.lastSavedAt}
+        onRun={workbench.runNow}
+        isRunning={workbench.isRunning}
+        providers={health.providers}
+        healthLoading={health.loading}
+        healthError={health.error}
+      />
       <div className="workbench-grid">
         <BlockPalette />
         <Canvas

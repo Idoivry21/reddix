@@ -1,12 +1,23 @@
 import { CalendarDays, Download, Play, Save, ShieldCheck } from 'lucide-react';
+import type { ProviderHealth } from '../api';
 
 interface TopBarProps {
   lastSavedAt: string;
   onRun: () => void;
   isRunning?: boolean;
+  providers?: ProviderHealth[];
+  healthLoading?: boolean;
+  healthError?: boolean;
 }
 
-export function TopBar({ lastSavedAt, onRun, isRunning = false }: TopBarProps) {
+export function TopBar({
+  lastSavedAt,
+  onRun,
+  isRunning = false,
+  providers = [],
+  healthLoading = false,
+  healthError = false
+}: TopBarProps) {
   return (
     <header className="top-bar">
       <div className="brand-cluster">
@@ -22,8 +33,11 @@ export function TopBar({ lastSavedAt, onRun, isRunning = false }: TopBarProps) {
         </span>
       </div>
       <div className="top-actions">
-        <span className="provider-pill reddit-dot">rdt <strong>Healthy</strong></span>
-        <span className="provider-pill twitter-dot">twitter <strong>Healthy</strong></span>
+        <ProviderHealthPills
+          providers={providers}
+          loading={healthLoading}
+          error={healthError}
+        />
         <button className="primary-button" onClick={onRun} disabled={isRunning}>
           <Play size={15} fill="currentColor" /> {isRunning ? 'Running…' : 'Run Now'}
         </button>
@@ -35,6 +49,44 @@ export function TopBar({ lastSavedAt, onRun, isRunning = false }: TopBarProps) {
         </button>
       </div>
     </header>
+  );
+}
+
+interface ProviderHealthPillsProps {
+  providers: ProviderHealth[];
+  loading: boolean;
+  error: boolean;
+}
+
+function ProviderHealthPills({ providers, loading, error }: ProviderHealthPillsProps) {
+  if (loading) {
+    return <span className="provider-pill provider-checking">Checking CLIs…</span>;
+  }
+  if (error) {
+    return (
+      <span className="provider-pill provider-error" role="status">
+        CLI health unavailable
+      </span>
+    );
+  }
+  if (providers.length === 0) {
+    return <span className="provider-pill provider-error">No providers detected</span>;
+  }
+  return (
+    <>
+      {providers.map((provider) => (
+        <span
+          key={provider.provider}
+          className={`provider-pill ${provider.provider}-dot ${
+            provider.available ? 'provider-healthy' : 'provider-missing'
+          }`}
+          role="status"
+          aria-label={`${provider.executable} ${provider.available ? 'healthy' : 'missing'}`}
+        >
+          {provider.executable} <strong>{provider.available ? 'Healthy' : 'Missing'}</strong>
+        </span>
+      ))}
+    </>
   );
 }
 
