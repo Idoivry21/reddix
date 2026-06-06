@@ -18,7 +18,8 @@ export function isSafeId(id: unknown): id is string {
   if (id === '.' || id === '..') {
     return false;
   }
-  if (id.includes('\0') || id.includes('/') || id.includes('\\')) {
+  // Reject leading dot (`.hidden`, `..foo`) and `\0`/path separators outright.
+  if (id.startsWith('.') || id.includes('\0') || id.includes('/') || id.includes('\\')) {
     return false;
   }
   if (!SAFE_ID_PATTERN.test(id)) {
