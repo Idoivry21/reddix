@@ -1,15 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { Edge } from '@xyflow/react';
 import { toFlowModel, toFlowRequestBody } from '../src/flowSerialization';
-import type { WorkbenchNode } from '../src/flowTypes';
+import type { WorkbenchEdge, WorkbenchNode } from '../src/flowTypes';
 
 function node(id: string, blockType: string, settings: Record<string, unknown>, x: number, y: number): WorkbenchNode {
-  return {
-    id,
-    type: 'workbenchBlock',
-    position: { x, y },
-    data: { blockType, label: id, settings, status: 'idle' }
-  };
+  return { id, blockType, label: id, x, y, settings, status: 'idle' };
 }
 
 const nodes: WorkbenchNode[] = [
@@ -17,8 +11,8 @@ const nodes: WorkbenchNode[] = [
   node('export', 'output.exportJson', { path: 'outputs/export.json' }, 400, 90)
 ];
 
-const edges: Edge[] = [
-  { id: 'e1', source: 'search', target: 'export', sourceHandle: 'items', targetHandle: 'items' }
+const edges: WorkbenchEdge[] = [
+  { id: 'e1', source: 'search', target: 'export', sourcePortId: 'items', targetPortId: 'items' }
 ];
 
 describe('toFlowModel', () => {
@@ -31,7 +25,7 @@ describe('toFlowModel', () => {
     ]);
   });
 
-  it('maps canvas edge handles to port ids', () => {
+  it('maps canvas edges to port ids', () => {
     const model = toFlowModel(nodes, edges);
 
     expect(model.edges).toEqual([
@@ -40,7 +34,9 @@ describe('toFlowModel', () => {
   });
 
   it('falls back to empty port ids when handles are missing', () => {
-    const model = toFlowModel(nodes, [{ id: 'e2', source: 'search', target: 'export' }]);
+    const model = toFlowModel(nodes, [
+      { id: 'e2', source: 'search', target: 'export' } as unknown as WorkbenchEdge
+    ]);
 
     expect(model.edges[0]).toMatchObject({ sourcePortId: '', targetPortId: '' });
   });
@@ -63,5 +59,14 @@ describe('toFlowRequestBody', () => {
     });
     expect(body.flow.nodes).toHaveLength(2);
     expect(body.flow.edges).toHaveLength(1);
+    expect(body.flow.schedule).toEqual({ enabled: false });
+  });
+
+  it('carries a provided schedule', () => {
+    const body = toFlowRequestBody(nodes, edges, { flowId: 'primary', name: 'My Flow', failFast: false }, {
+      enabled: true,
+      intervalMs: 3_600_000
+    });
+    expect(body.flow.schedule).toEqual({ enabled: true, intervalMs: 3_600_000 });
   });
 });

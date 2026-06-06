@@ -16,9 +16,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          // Split the heavy canvas library out of the main bundle so it can be
-          // cached independently of app code.
-          xyflow: ['@xyflow/react'],
+          // Split the icon library out of the main bundle so it can be cached
+          // independently of app code. The canvas is now bespoke (no @xyflow).
           icons: ['lucide-react']
         }
       }

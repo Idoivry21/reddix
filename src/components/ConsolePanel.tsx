@@ -1,53 +1,113 @@
-import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, Maximize2, MinusCircle, Trash2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import type { ConsoleRunStep, ConsoleState } from '../api';
+import type { RunStatusKind } from '../flowTypes';
 import { Tabs, tabId, tabPanelId } from './Tabs';
 
 interface ConsolePanelProps {
   state: ConsoleState;
   onTabChange: (tab: ConsoleState['activeTab']) => void;
+  height?: number;
+  setHeight?: (height: number) => void;
+  collapsed?: boolean;
+  setCollapsed?: (collapsed: boolean) => void;
+  onClear?: () => void;
+  runState?: RunStatusKind;
 }
 
-const tabs: ConsoleState['activeTab'][] = ['Command Trace', 'Logs', 'Output Preview', 'History'];
+const TABS: ConsoleState['activeTab'][] = ['Logs', 'Output Preview', 'Command Trace', 'History'];
 
-export function ConsolePanel({ state, onTabChange }: ConsolePanelProps) {
+const MIN_HEIGHT = 120;
+const COLLAPSED_HEIGHT = 40;
+
+export function ConsolePanel({
+  state,
+  onTabChange,
+  height = 208,
+  setHeight,
+  collapsed = false,
+  setCollapsed,
+  onClear,
+  runState = 'idle'
+}: ConsolePanelProps) {
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const resizing = useRef<{ y: number; h: number } | null>(null);
+
+  useEffect(() => {
+    if (bodyRef.current && state.activeTab === 'Logs') {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }
+  }, [state.logs, state.activeTab]);
+
+  const startResize = (event: React.PointerEvent): void => {
+    if (!setHeight) {
+      return;
+    }
+    resizing.current = { y: event.clientY, h: height };
+    const move = (moveEvent: PointerEvent): void => {
+      if (!resizing.current) {
+        return;
+      }
+      const next = Math.max(MIN_HEIGHT, Math.min(window.innerHeight - 140, resizing.current.h + (resizing.current.y - moveEvent.clientY)));
+      setHeight(next);
+    };
+    const up = (): void => {
+      resizing.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const dockHeight = collapsed ? COLLAPSED_HEIGHT : height;
+
   return (
-    <section className="console-panel" aria-label="Run console">
-      <div className="console-tabs">
-        <Tabs
-          tabs={tabs}
-          active={state.activeTab}
-          onChange={(tab) => onTabChange(tab as ConsoleState['activeTab'])}
-          label="Run console views"
-          idPrefix="console"
-        />
-        <div className="console-actions">
-          <button className="ghost-button" type="button">
-            <Trash2 size={14} /> Clear
-          </button>
-          <button className="run-pill" type="button">
-            <CheckCircle2 size={14} /> {state.runLabel}
-          </button>
-          <button className="icon-button" aria-label="Expand console" type="button">
-            <Maximize2 size={14} />
-          </button>
+    <section className="console" aria-label="Run console" style={{ height: dockHeight }}>
+      {!collapsed && setHeight ? <div className="console-resize" onPointerDown={startResize} /> : null}
+      <div className="console-head">
+        <div className="console-tabs">
+          <Tabs
+            tabs={TABS}
+            active={state.activeTab}
+            onChange={(tab) => {
+              onTabChange(tab as ConsoleState['activeTab']);
+              setCollapsed?.(false);
+            }}
+            label="Run console views"
+            idPrefix="console"
+          />
         </div>
+        <div className="console-spacer" />
+        {runState === 'running' ? (
+          <span className="console-meta">
+            <span className="spin-fast console-spin" /> executing
+          </span>
+        ) : (
+          <span className="console-meta">{state.runLabel}</span>
+        )}
+        <button className="console-btn" type="button" title="Clear logs" aria-label="Clear logs" onClick={onClear}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
+          </svg>
+        </button>
+        {setCollapsed ? (
+          <button
+            className="console-btn"
+            type="button"
+            title={collapsed ? 'Expand' : 'Collapse'}
+            aria-label={collapsed ? 'Expand console' : 'Collapse console'}
+            onClick={() => setCollapsed(!collapsed)}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: collapsed ? 'rotate(180deg)' : 'none' }}>
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+        ) : null}
       </div>
-      <div className="console-body">
-        <ol className="step-list">
-          {state.steps.map((step, index) => (
-            <li key={step.id} className={`step-${step.status}`}>
-              <StepIcon status={step.status} />
-              <span>{index + 1}</span>
-              <div>
-                <strong>{step.label}</strong>
-                <small>{step.sublabel}</small>
-              </div>
-              <em>{step.duration}</em>
-            </li>
-          ))}
-        </ol>
+      {!collapsed ? (
         <div
-          className="console-detail"
+          className="console-body"
+          ref={bodyRef}
           role="tabpanel"
           id={tabPanelId('console', state.activeTab)}
           aria-labelledby={tabId('console', state.activeTab)}
@@ -56,41 +116,36 @@ export function ConsolePanel({ state, onTabChange }: ConsolePanelProps) {
           {state.activeTab === 'Output Preview' ? (
             <ResultTable rows={state.results} />
           ) : state.activeTab === 'Logs' ? (
-            <ul className="log-list">
-              {state.logs.map((log, index) => (
-                <li key={`${index}-${log}`}>{log}</li>
-              ))}
-            </ul>
+            <LogList logs={state.logs} />
           ) : state.activeTab === 'History' ? (
             <HistoryList entries={state.history} />
           ) : (
             <CommandTrace steps={state.steps} />
           )}
         </div>
-      </div>
+      ) : null}
     </section>
   );
 }
 
-function StepIcon({ status }: { status: ConsoleRunStep['status'] }) {
-  if (status === 'success') {
-    return <CheckCircle2 size={15} className="status-success" />;
+function LogList({ logs }: { logs: string[] }) {
+  if (logs.length === 0) {
+    return <div className="out-empty">No logs yet — press Run flow to execute.</div>;
   }
-  if (status === 'failed') {
-    return <AlertTriangle size={15} className="status-error" />;
-  }
-  if (status === 'running') {
-    return <Loader2 size={15} className="status-running" />;
-  }
-  if (status === 'skipped') {
-    return <MinusCircle size={15} className="status-skipped" />;
-  }
-  return <CircleDashed size={15} className="status-idle" />;
+  return (
+    <div className="log-stream">
+      {logs.map((log, index) => (
+        <div className="log-line" key={`${index}-${log}`}>
+          <span className="lm">{log}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function CommandTrace({ steps }: { steps: ConsoleRunStep[] }) {
   if (steps.length === 0) {
-    return <p className="empty-state">No run yet. Press Run Now to execute the flow.</p>;
+    return <div className="out-empty">No run yet. Press Run flow to execute the flow.</div>;
   }
   return (
     <div className="command-trace">
@@ -132,7 +187,7 @@ function CommandTrace({ steps }: { steps: ConsoleRunStep[] }) {
 
 function HistoryList({ entries }: { entries: ConsoleState['history'] }) {
   if (entries.length === 0) {
-    return <p className="empty-state">No run history yet.</p>;
+    return <div className="out-empty">No run history yet.</div>;
   }
   return (
     <ul className="history-list">
@@ -151,10 +206,10 @@ function HistoryList({ entries }: { entries: ConsoleState['history'] }) {
 
 function ResultTable({ rows }: { rows: Array<Record<string, string | number | null>> }) {
   if (rows.length === 0) {
-    return <p className="empty-state">No output rows. Run a flow with an export block to see results.</p>;
+    return <div className="out-empty">No output rows. Run a flow with an export block to see results.</div>;
   }
   return (
-    <table className="result-table">
+    <table className="out-table">
       <thead>
         <tr>
           <th>kind</th>
@@ -170,7 +225,7 @@ function ResultTable({ rows }: { rows: Array<Record<string, string | number | nu
             <td>{row.kind}</td>
             <td>{row.title}</td>
             <td>{row.author}</td>
-            <td>{row.score}</td>
+            <td className="num">{row.score}</td>
             <td>{row.created}</td>
           </tr>
         ))}

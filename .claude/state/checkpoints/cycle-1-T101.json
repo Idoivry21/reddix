@@ -1,0 +1,6 @@
+{
+  "session_id": "unknown",
+  "title": "harness-loop cycle 1/8: T101 redact secrets",
+  "content": "T101 done. commit 54f08eb on codex/social-cli-canvas-implementation. Wired redactSecrets into runEngine (stderr/stdoutSummary/error all paths, redact-before-summarize), SSE, persisted JSON; least-priv CLI env incl checkExecutable; +2 invariant-2 tests. Gate: 41/41 tests, tsc clean. Review: APPROVE after fixing 1 HIGH (truncation-order leak) + 1 MEDIUM. Next: T102 (CORS).",
+  "stamped_at_note": "date set by caller"
+}

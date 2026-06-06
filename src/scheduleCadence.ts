@@ -1,0 +1,115 @@
+/**
+ * The backend scheduler stores an interval (ms), not a cron expression, and
+ * enforces a 15-minute floor. This module maps the cron-preset UI onto a
+ * concrete, clamped interval the backend accepts, and best-effort parses common
+ * custom cron cadences so a typed-in expression isn't silently ignored.
+ */
+import { MIN_SCHEDULE_INTERVAL_MS } from './shared/schedule';
+
+export { MIN_SCHEDULE_INTERVAL_MS };
+
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+const MONTH = 30 * DAY;
+
+export interface CadencePreset {
+  id: string;
+  title: string;
+  cron: string;
+  intervalMs: number;
+}
+
+export const SCHEDULE_PRESETS: CadencePreset[] = [
+  { id: 'hourly', title: 'Every hour', cron: '0 * * * *', intervalMs: HOUR },
+  { id: 'daily', title: 'Daily · 9:00', cron: '0 9 * * *', intervalMs: DAY },
+  { id: 'weekdays', title: 'Weekdays · 8:00', cron: '0 8 * * 1-5', intervalMs: DAY },
+  { id: 'weekly', title: 'Mondays · 9:00', cron: '0 9 * * 1', intervalMs: WEEK },
+  { id: 'monthly', title: '1st of month', cron: '0 9 1 * *', intervalMs: MONTH },
+  { id: 'custom', title: 'Custom', cron: '', intervalMs: DAY }
+];
+
+const PRESET_BY_CRON = new Map(SCHEDULE_PRESETS.filter((preset) => preset.cron).map((preset) => [preset.cron, preset]));
+
+/** Never schedule faster than the backend's minimum interval. */
+export function clampInterval(intervalMs: number): number {
+  return Math.max(MIN_SCHEDULE_INTERVAL_MS, Math.round(intervalMs));
+}
+
+/**
+ * Best-effort interpretation of common 5-field cron cadences. Returns null when
+ * the expression isn't one of the recognised shapes (caller falls back).
+ */
+export function parseCronIntervalMs(cron: string): number | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    return null;
+  }
+  const [minute, hour, dom, , dow] = parts;
+  const everyMinutes = /^\*\/(\d+)$/.exec(minute);
+  if (everyMinutes && hour === '*') {
+    return Number(everyMinutes[1]) * 60 * 1000;
+  }
+  const everyHours = /^\*\/(\d+)$/.exec(hour);
+  if (everyHours && /^\d+$/.test(minute)) {
+    return Number(everyHours[1]) * HOUR;
+  }
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) {
+    if (dom !== '*') {
+      return MONTH;
+    }
+    if (dow !== '*') {
+      return WEEK;
+    }
+    return DAY;
+  }
+  return null;
+}
+
+/** Resolve a cron expression to a clamped interval, defaulting to daily. */
+export function cronToIntervalMs(cron: string): number {
+  const preset = PRESET_BY_CRON.get(cron.trim());
+  if (preset) {
+    return clampInterval(preset.intervalMs);
+  }
+  return clampInterval(parseCronIntervalMs(cron) ?? DAY);
+}
+
+/** Find the preset matching a cron expression (for highlighting in the UI). */
+export function presetForCron(cron: string): CadencePreset | undefined {
+  return PRESET_BY_CRON.get(cron.trim());
+}
+
+/** Human-readable effective cadence for a clamped interval (UI transparency). */
+export function describeInterval(intervalMs: number): string {
+  const ms = clampInterval(intervalMs);
+  if (ms < HOUR) {
+    return `every ${Math.round(ms / (60 * 1000))} min`;
+  }
+  if (ms < DAY) {
+    const hours = Math.round(ms / HOUR);
+    return hours === 1 ? 'hourly' : `every ${hours} hr`;
+  }
+  if (ms === DAY) {
+    return 'daily';
+  }
+  if (ms === WEEK) {
+    return 'weekly';
+  }
+  if (ms === MONTH) {
+    return 'monthly';
+  }
+  return `every ${Math.round(ms / DAY)} days`;
+}
+
+const EXPLAIN: Record<string, string> = {
+  '0 * * * *': 'Runs at the top of every hour.',
+  '0 9 * * *': 'Runs every day at 09:00.',
+  '0 8 * * 1-5': 'Runs Monday–Friday at 08:00.',
+  '0 9 * * 1': 'Runs every Monday at 09:00.',
+  '0 9 1 * *': 'Runs on the 1st of each month at 09:00.'
+};
+
+export function cronExplain(cron: string): string {
+  return EXPLAIN[cron.trim()] ?? 'Custom schedule — five fields: minute hour day month weekday.';
+}

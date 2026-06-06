@@ -1,254 +1,409 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  addEdge,
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  ReactFlowProvider,
-  useReactFlow,
-  type Connection,
-  type Edge,
-  type IsValidConnection,
-  type NodeChange,
-  type OnNodesChange,
-  type OnEdgesChange
-} from '@xyflow/react';
-import { BlockNode } from './BlockNode';
-import type { WorkbenchNode, WorkbenchNodeData } from '../flowTypes';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { NodeCard } from './NodeCard';
+import { getBlockSpec } from '../shared/commandBuilders';
 import { canConnect } from '../shared/graph';
-import { getBlockSpec, getDefaultSettings } from '../shared/commandBuilders';
-import { historyDecision } from '../historyControl';
+import { edgePath, nodePorts, type PortPoint } from '../canvasGeometry';
+import type { CanvasView, NodeSize, WorkbenchEdge, WorkbenchNode } from '../flowTypes';
 
-const nodeTypes = { workbenchBlock: BlockNode };
+const BLOCK_DRAG_MIME = 'application/reddix-block';
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 2;
 
 interface CanvasProps {
   nodes: WorkbenchNode[];
-  edges: Edge[];
-  setNodes: React.Dispatch<React.SetStateAction<WorkbenchNode[]>>;
-  setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
-  onNodesChange: OnNodesChange<WorkbenchNode>;
-  onEdgesChange: OnEdgesChange;
-  selectedNodeId: string;
-  onSelectNode: (nodeId: string) => void;
-  setValidationMessage: (message: string) => void;
+  edges: WorkbenchEdge[];
+  view: CanvasView;
+  setView: (updater: (view: CanvasView) => CanvasView) => void;
+  sizes: Record<string, NodeSize>;
+  onMeasure: (id: string, w: number, h: number) => void;
+  selectedNodeId: string | null;
+  selectedEdgeId: string | null;
+  onSelectNode: (id: string) => void;
+  onSelectEdge: (id: string) => void;
+  onMoveNode: (id: string, x: number, y: number) => void;
+  onConnect: (source: string, sourcePortId: string, target: string, targetPortId: string) => void;
+  onDeleteEdge: (id: string) => void;
+  onDropBlock: (blockType: string, x: number, y: number) => void;
+  onPaneClick: () => void;
+  onFit: () => void;
+  dragType: string | null;
   readOnly?: boolean;
 }
 
-export function Canvas(props: CanvasProps) {
-  return (
-    <ReactFlowProvider>
-      <CanvasInner {...props} />
-    </ReactFlowProvider>
-  );
+type DragState =
+  | { mode: 'pan'; startX: number; startY: number; ox: number; oy: number; moved: boolean }
+  | { mode: 'node'; id: string; dx: number; dy: number; moved: boolean }
+  | { mode: 'wire'; from: string; fromPort: string };
+
+interface TempWire {
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
 }
 
-function CanvasInner({
-  nodes,
-  edges,
-  setNodes,
-  setEdges,
-  onNodesChange: onNodesChangeBase,
-  onEdgesChange,
-  onSelectNode,
-  setValidationMessage,
-  readOnly = false
-}: CanvasProps) {
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  // Keep latest nodes in a ref so the connection validator stays referentially
-  // stable instead of being rebuilt on every drag frame.
-  const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
-  const { screenToFlowPosition, fitView } = useReactFlow();
-  const [history, setHistory] = useState<Array<{ nodes: WorkbenchNode[]; edges: Edge[] }>>([]);
-  const [future, setFuture] = useState<Array<{ nodes: WorkbenchNode[]; edges: Edge[] }>>([]);
+export function Canvas(props: CanvasProps) {
+  const {
+    nodes,
+    edges,
+    view,
+    setView,
+    sizes,
+    onMeasure,
+    selectedNodeId,
+    selectedEdgeId,
+    onSelectNode,
+    onSelectEdge,
+    onMoveNode,
+    onConnect,
+    onDeleteEdge,
+    onDropBlock,
+    onPaneClick,
+    onFit,
+    dragType,
+    readOnly = false
+  } = props;
 
-  const pushHistory = useCallback(() => {
-    setHistory((items) => [...items.slice(-20), { nodes, edges }]);
-    setFuture([]);
-  }, [edges, nodes]);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const drag = useRef<DragState | null>(null);
+  const [temp, setTemp] = useState<TempWire | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [hoverPort, setHoverPort] = useState<{ node: string; port: string } | null>(null);
+  const [hoverEdge, setHoverEdge] = useState<string | null>(null);
 
-  const draggingRef = useRef(false);
-
-  const onNodesChange = useCallback(
-    (changes: NodeChange<WorkbenchNode>[]) => {
-      const decision = historyDecision(changes, draggingRef.current);
-      draggingRef.current = decision.dragging;
-      if (decision.snapshot) {
-        pushHistory();
+  const toCanvas = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } => {
+      const rect = wrapRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return { x: clientX, y: clientY };
       }
-      onNodesChangeBase(changes);
+      return { x: (clientX - rect.left - view.x) / view.k, y: (clientY - rect.top - view.y) / view.k };
     },
-    [onNodesChangeBase, pushHistory]
+    [view.x, view.y, view.k]
   );
 
-  const isValidConnection: IsValidConnection<Edge> = useCallback(
-    (connection: Connection | Edge) => {
-      const current = nodesRef.current;
-      const source = current.find((node) => node.id === connection.source);
-      const target = current.find((node) => node.id === connection.target);
-      if (!source || !target || !connection.sourceHandle || !connection.targetHandle) {
-        return false;
+  const portPointById = useCallback(
+    (nodeId: string, portId: string, kind: 'in' | 'out'): PortPoint | undefined => {
+      const node = nodes.find((item) => item.id === nodeId);
+      if (!node) {
+        return undefined;
       }
-      const result = canConnect({
-        sourceBlockType: source.data.blockType,
-        sourcePortId: connection.sourceHandle,
-        targetBlockType: target.data.blockType,
-        targetPortId: connection.targetHandle
-      });
-      setValidationMessage(result.valid ? 'Ready to run' : result.reason);
-      return result.valid;
+      const geometry = nodePorts(node, getBlockSpec(node.blockType), sizes[nodeId]);
+      const list = kind === 'in' ? geometry.ins : geometry.outs;
+      return list.find((point) => point.id === portId) ?? list[0];
     },
-    [setValidationMessage]
+    [nodes, sizes]
   );
 
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      if (!isValidConnection(connection)) {
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      const target = (event.target as HTMLElement).closest('[data-role]');
+      const role = target?.getAttribute('data-role');
+
+      if (role === 'port-out' && !readOnly) {
+        const nodeId = target!.getAttribute('data-node')!;
+        const portId = target!.getAttribute('data-port')!;
+        const point = portPointById(nodeId, portId, 'out');
+        if (point) {
+          drag.current = { mode: 'wire', from: nodeId, fromPort: portId };
+          setConnecting(true);
+          setTemp({ sx: point.x, sy: point.y, tx: point.x, ty: point.y });
+          event.preventDefault();
+        }
         return;
       }
-      pushHistory();
-      setEdges((existing) => addEdge({ ...connection, type: 'smoothstep' }, existing));
+      if (role === 'drag' && !readOnly) {
+        const nodeId = target!.getAttribute('data-id')!;
+        const node = nodes.find((item) => item.id === nodeId);
+        if (node) {
+          const point = toCanvas(event.clientX, event.clientY);
+          drag.current = { mode: 'node', id: nodeId, dx: point.x - node.x, dy: point.y - node.y, moved: false };
+          onSelectNode(nodeId);
+          event.preventDefault();
+        }
+        return;
+      }
+      if (role === 'node') {
+        onSelectNode(target!.getAttribute('data-id')!);
+        return;
+      }
+      drag.current = { mode: 'pan', startX: event.clientX, startY: event.clientY, ox: view.x, oy: view.y, moved: false };
     },
-    [isValidConnection, pushHistory, setEdges]
+    [nodes, onSelectNode, portPointById, readOnly, toCanvas, view.x, view.y]
   );
 
+  useEffect(() => {
+    const move = (event: PointerEvent): void => {
+      const state = drag.current;
+      if (!state) {
+        return;
+      }
+      if (state.mode === 'pan') {
+        const nx = state.ox + (event.clientX - state.startX);
+        const ny = state.oy + (event.clientY - state.startY);
+        if (Math.abs(event.clientX - state.startX) + Math.abs(event.clientY - state.startY) > 3) {
+          state.moved = true;
+        }
+        setView((current) => ({ ...current, x: nx, y: ny }));
+      } else if (state.mode === 'node') {
+        const point = toCanvas(event.clientX, event.clientY);
+        state.moved = true;
+        onMoveNode(state.id, Math.round(point.x - state.dx), Math.round(point.y - state.dy));
+      } else {
+        const point = toCanvas(event.clientX, event.clientY);
+        const element = document.elementFromPoint(event.clientX, event.clientY);
+        const portEl = element?.closest('[data-role="port-in"]');
+        setHoverPort(
+          portEl
+            ? { node: portEl.getAttribute('data-node')!, port: portEl.getAttribute('data-port')! }
+            : null
+        );
+        setTemp((current) => (current ? { ...current, tx: point.x, ty: point.y } : current));
+      }
+    };
+
+    const up = (event: PointerEvent): void => {
+      const state = drag.current;
+      if (state?.mode === 'wire') {
+        const element = document.elementFromPoint(event.clientX, event.clientY);
+        const portEl = element?.closest('[data-role="port-in"]');
+        if (portEl) {
+          const toNode = portEl.getAttribute('data-node')!;
+          const toPort = portEl.getAttribute('data-port')!;
+          if (toNode !== state.from) {
+            onConnect(state.from, state.fromPort, toNode, toPort);
+          }
+        }
+        setTemp(null);
+        setHoverPort(null);
+        setConnecting(false);
+      }
+      if (state?.mode === 'pan' && !state.moved) {
+        onPaneClick();
+      }
+      drag.current = null;
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+  }, [onConnect, onMoveNode, onPaneClick, setView, toCanvas]);
+
+  // Native non-passive wheel listener so we can preventDefault (React binds
+  // wheel passively). Scroll pans; Cmd/Ctrl-scroll zooms toward the cursor.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) {
+      return;
+    }
+    const onWheel = (event: WheelEvent): void => {
+      const rect = wrap.getBoundingClientRect();
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const mx = event.clientX - rect.left;
+        const my = event.clientY - rect.top;
+        setView((current) => {
+          const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.k * (event.deltaY < 0 ? 1.08 : 0.926)));
+          const ratio = k / current.k;
+          return { k, x: mx - (mx - current.x) * ratio, y: my - (my - current.y) * ratio };
+        });
+        return;
+      }
+      event.preventDefault();
+      setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
+    };
+    wrap.addEventListener('wheel', onWheel, { passive: false });
+    return () => wrap.removeEventListener('wheel', onWheel);
+  }, [setView]);
+
   const onDrop = useCallback(
-    (event: React.DragEvent) => {
+    (event: React.DragEvent): void => {
       event.preventDefault();
       if (readOnly) {
         return;
       }
-      const blockType = event.dataTransfer.getData('application/reddix-block');
+      const blockType = event.dataTransfer.getData(BLOCK_DRAG_MIME) || dragType;
       if (!blockType) {
         return;
       }
-      const spec = getBlockSpec(blockType);
-      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      const node: WorkbenchNode = {
-        id: `${blockType}-${Date.now()}`,
-        type: 'workbenchBlock',
-        position,
-        data: {
-          blockType,
-          label: spec.label,
-          settings: getDefaultSettings(blockType),
-          status: 'idle'
-        } satisfies WorkbenchNodeData
-      };
-      pushHistory();
-      setNodes((current) => [...current, node]);
-      onSelectNode(node.id);
+      const point = toCanvas(event.clientX, event.clientY);
+      onDropBlock(blockType, Math.round(point.x - 110), Math.round(point.y - 40));
     },
-    [onSelectNode, pushHistory, readOnly, screenToFlowPosition, setNodes]
+    [dragType, onDropBlock, readOnly, toCanvas]
   );
 
-  const selectedIds = useMemo(() => nodes.filter((node) => node.selected).map((node) => node.id), [nodes]);
+  const nodeStatusById = useMemo(
+    () => Object.fromEntries(nodes.map((node) => [node.id, node.status])),
+    [nodes]
+  );
 
-  const undo = useCallback(() => {
-    const previous = history.at(-1);
-    if (!previous) {
-      return;
+  const activeEdges = useMemo(() => {
+    const active = new Set<string>();
+    for (const edge of edges) {
+      if (
+        nodeStatusById[edge.source] === 'success' &&
+        (nodeStatusById[edge.target] === 'running' || nodeStatusById[edge.target] === 'success')
+      ) {
+        active.add(edge.id);
+      }
     }
-    setFuture((items) => [{ nodes, edges }, ...items]);
-    setNodes(previous.nodes);
-    setEdges(previous.edges);
-    setHistory((items) => items.slice(0, -1));
-  }, [edges, history, nodes, setEdges, setNodes]);
-
-  const redo = useCallback(() => {
-    const next = future[0];
-    if (!next) {
-      return;
-    }
-    setHistory((items) => [...items, { nodes, edges }]);
-    setNodes(next.nodes);
-    setEdges(next.edges);
-    setFuture((items) => items.slice(1));
-  }, [edges, future, nodes, setEdges, setNodes]);
-
-  const duplicateSelection = useCallback(() => {
-    if (!selectedIds.length) {
-      return;
-    }
-    pushHistory();
-    setNodes((current) => [
-      ...current,
-      ...current
-        .filter((node) => selectedIds.includes(node.id))
-        .map((node) => ({
-          ...node,
-          id: `${node.id}-copy-${Date.now()}`,
-          selected: false,
-          position: { x: node.position.x + 32, y: node.position.y + 32 }
-        }))
-    ]);
-  }, [pushHistory, selectedIds, setNodes]);
-
-  const deleteSelection = useCallback(() => {
-    if (!selectedIds.length) {
-      return;
-    }
-    pushHistory();
-    setNodes((current) => current.filter((node) => !selectedIds.includes(node.id)));
-    setEdges((current) => current.filter((edge) => !selectedIds.includes(edge.source) && !selectedIds.includes(edge.target)));
-  }, [pushHistory, selectedIds, setEdges, setNodes]);
+    return active;
+  }, [edges, nodeStatusById]);
 
   return (
     <section
-      className="canvas-shell"
-      ref={wrapperRef}
+      ref={wrapRef}
+      className="canvas-wrap"
+      aria-label="Flow canvas"
+      data-grid="dots"
+      data-connecting={connecting ? 'true' : 'false'}
+      onPointerDown={onPointerDown}
       onDragOver={(event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
+        if (dragType) {
+          event.preventDefault();
+        }
       }}
       onDrop={onDrop}
-      onKeyDown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === '0') {
-          fitView();
-          return;
-        }
-        if (readOnly) {
-          return;
-        }
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
-          event.shiftKey ? redo() : undo();
-        }
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
-          duplicateSelection();
-        }
-        if (event.key === 'Delete' || event.key === 'Backspace') {
-          deleteSelection();
-        }
-      }}
-      tabIndex={0}
     >
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        isValidConnection={isValidConnection}
-        onNodeClick={(_, node) => onSelectNode(node.id)}
-        nodeTypes={nodeTypes}
-        fitView
-        nodesDraggable={!readOnly}
-        nodesConnectable={!readOnly}
-        edgesFocusable={!readOnly}
-        multiSelectionKeyCode={readOnly ? null : ['Meta', 'Control', 'Shift']}
-        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
-      >
-        <Background gap={18} size={1} color="#d9dee8" />
-        <Controls position="bottom-left" />
-        <MiniMap zoomable pannable position="bottom-right" nodeStrokeWidth={3} />
-      </ReactFlow>
+      <div className="canvas-pan" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+        <svg className="edges-svg" style={{ left: -4000, top: -4000 }}>
+          <g transform="translate(4000,4000)">
+            {edges.map((edge) => {
+              const sourcePoint = portPointById(edge.source, edge.sourcePortId, 'out');
+              const targetPoint = portPointById(edge.target, edge.targetPortId, 'in');
+              if (!sourcePoint || !targetPoint) {
+                return null;
+              }
+              const d = edgePath(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y);
+              const isActive = activeEdges.has(edge.id);
+              const isSelected = selectedEdgeId === edge.id;
+              const mid = { x: (sourcePoint.x + targetPoint.x) / 2, y: (sourcePoint.y + targetPoint.y) / 2 };
+              return (
+                <g key={edge.id}>
+                  <path className={`edge flow ${isActive ? 'active edge-dash' : ''} ${isSelected ? 'selected' : ''}`} d={d} />
+                  <path
+                    className="edge-hit"
+                    d={d}
+                    role="button"
+                    tabIndex={readOnly ? -1 : 0}
+                    aria-label={`Connection ${edge.source} → ${edge.target}. Press Delete to remove.`}
+                    onPointerEnter={() => setHoverEdge(edge.id)}
+                    onPointerLeave={() => setHoverEdge((current) => (current === edge.id ? null : current))}
+                    onFocus={() => {
+                      setHoverEdge(edge.id);
+                      onSelectEdge(edge.id);
+                    }}
+                    onBlur={() => setHoverEdge((current) => (current === edge.id ? null : current))}
+                    onKeyDown={(event) => {
+                      if (readOnly) {
+                        return;
+                      }
+                      if (event.key === 'Delete' || event.key === 'Backspace') {
+                        event.preventDefault();
+                        onDeleteEdge(edge.id);
+                      } else if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onSelectEdge(edge.id);
+                      }
+                    }}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      onSelectEdge(edge.id);
+                    }}
+                  />
+                  {(hoverEdge === edge.id || isSelected) && !readOnly ? (
+                    <g
+                      className="edge-del"
+                      transform={`translate(${mid.x},${mid.y})`}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        onDeleteEdge(edge.id);
+                        setHoverEdge(null);
+                      }}
+                    >
+                      <circle r="9" />
+                      <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" />
+                      <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" />
+                    </g>
+                  ) : null}
+                </g>
+              );
+            })}
+            {temp ? <path className="temp-edge" d={edgePath(temp.sx, temp.sy, temp.tx, temp.ty)} /> : null}
+          </g>
+        </svg>
+
+        {nodes.map((node) => (
+          <NodeCard
+            key={node.id}
+            node={node}
+            selected={selectedNodeId === node.id}
+            onMeasure={onMeasure}
+            onSelect={onSelectNode}
+          />
+        ))}
+
+        {hoverPort
+          ? (() => {
+              const point = portPointById(hoverPort.node, hoverPort.port, 'in');
+              if (!point) {
+                return null;
+              }
+              const wire = drag.current?.mode === 'wire' ? drag.current : null;
+              const sourceNode = wire ? nodes.find((n) => n.id === wire.from) : undefined;
+              const targetNode = nodes.find((n) => n.id === hoverPort.node);
+              const valid =
+                wire && sourceNode && targetNode
+                  ? canConnect({
+                      sourceBlockType: sourceNode.blockType,
+                      sourcePortId: wire.fromPort,
+                      targetBlockType: targetNode.blockType,
+                      targetPortId: hoverPort.port
+                    }).valid
+                  : true;
+              return (
+                <div
+                  className={`port-target ${valid ? 'ok' : 'bad'}`}
+                  style={{ position: 'absolute', left: point.x - 11, top: point.y - 11, width: 22, height: 22 }}
+                />
+              );
+            })()
+          : null}
+      </div>
+
       {nodes.length === 0 ? (
         <div className="canvas-empty" role="note">
-          <strong>Empty canvas</strong>
-          <p>Add a block from the palette (drag, click, or Enter) to start building a flow.</p>
+          <div className="ce-inner">
+            <div className="ce-title">Empty canvas</div>
+            <div className="ce-sub">Drag a block from the left to begin a flow.</div>
+          </div>
         </div>
       ) : null}
+
+      <div className="canvas-hint">Drag blocks in · drag a port to wire · scroll to pan · ⌘scroll to zoom</div>
+
+      <div className="canvas-toolbar">
+        <button className="tool-btn" title="Zoom out" onClick={() => setView((v) => ({ ...v, k: Math.max(MIN_ZOOM, v.k * 0.88) }))}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M5 12h14" />
+          </svg>
+        </button>
+        <span className="zoom-val">{Math.round(view.k * 100)}%</span>
+        <button className="tool-btn" title="Zoom in" onClick={() => setView((v) => ({ ...v, k: Math.min(MAX_ZOOM, v.k * 1.14) }))}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        <div className="toolbar-sep" />
+        <button className="tool-btn" title="Fit / reset" onClick={onFit}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
+          </svg>
+        </button>
+      </div>
     </section>
   );
 }

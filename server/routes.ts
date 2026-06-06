@@ -4,6 +4,7 @@ import express from 'express';
 import { listBlockSpecs } from '../src/shared/commandBuilders';
 import { getProviderHealthCommands } from '../src/shared/commandBuilders';
 import { buildSecretMap } from '../src/shared/redaction';
+import { MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
 import { checkExecutable, cliExecutor } from './executor';
 import { runFlow } from './runEngine';
 import { createRateLimiter } from './rateLimiter';
@@ -30,7 +31,7 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   const scheduler = createScheduler({
-    minIntervalMs: 15 * 60 * 1000,
+    minIntervalMs: MIN_SCHEDULE_INTERVAL_MS,
     jitterMs: 30 * 1000,
     runFlow: async (flowId) => {
       await runAndStore(flowId);
@@ -43,7 +44,7 @@ export function createRoutes(options: RoutesOptions) {
   function syncSchedule(flow: PersistedFlow): void {
     if (flow.schedule?.enabled) {
       scheduler.register(flow.id, {
-        intervalMs: flow.schedule.intervalMs ?? 15 * 60 * 1000,
+        intervalMs: flow.schedule.intervalMs ?? MIN_SCHEDULE_INTERVAL_MS,
         enabled: true,
         paused: flow.schedule.paused ?? false,
         providers: flowProviders(flow)

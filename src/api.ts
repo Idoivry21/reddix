@@ -52,6 +52,27 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return (await response.json()) as HealthResponse;
 }
 
+export async function listFlows(): Promise<PersistedFlow[]> {
+  const response = await fetch('/api/flows');
+  if (!response.ok) {
+    throw new Error(`Failed to list flows (status ${response.status})`);
+  }
+  const payload = (await response.json()) as { flows?: PersistedFlow[] };
+  return payload.flows ?? [];
+}
+
+export async function getFlow(flowId: string): Promise<PersistedFlow | null> {
+  const response = await fetch(`/api/flows/${flowId}`);
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to load flow (status ${response.status})`);
+  }
+  const payload = (await response.json()) as { flow: PersistedFlow };
+  return payload.flow;
+}
+
 export async function saveFlow(flowId: string, body: FlowRequestBody): Promise<PersistedFlow> {
   const response = await fetch(`/api/flows/${flowId}`, {
     method: 'PUT',

@@ -1,0 +1,1 @@
+{"session_id":"x","title":"harness-loop cycle 2/8: T102 CORS+CSRF","content":"T102 done. commit fd0474c. Env-config CORS allowlist (REDDIX_ALLOWED_ORIGINS, default Vite origins) + Sec-Fetch-Site CSRF guard for mutating methods. Gate 64/64 tests, tsc clean. Review APPROVE after adding CSRF guard (MEDIUM) + spoof tests (LOW). Next: T103 (flowId path-traversal)."}

@@ -1,7 +1,7 @@
 import { getBlockSpec, getDefaultSettings } from './shared/commandBuilders';
-import type { WorkbenchNode, WorkbenchNodeData } from './flowTypes';
+import type { WorkbenchNode } from './flowTypes';
 
-/** Build a fresh canvas node for a block type at the given flow position. */
+/** Build a fresh canvas node for a block type at the given canvas position. */
 export function createBlockNode(
   blockType: string,
   position: { x: number; y: number },
@@ -10,13 +10,11 @@ export function createBlockNode(
   const spec = getBlockSpec(blockType);
   return {
     id: `${blockType}-${idSuffix}`,
-    type: 'workbenchBlock',
-    position,
-    data: {
-      blockType,
-      label: spec.label,
-      settings: getDefaultSettings(blockType),
-      status: 'idle'
-    } satisfies WorkbenchNodeData
+    blockType,
+    label: spec.label,
+    x: position.x,
+    y: position.y,
+    settings: getDefaultSettings(blockType),
+    status: 'idle'
   };
 }

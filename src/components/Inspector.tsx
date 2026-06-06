@@ -1,92 +1,153 @@
-import { useState } from 'react';
-import { X } from 'lucide-react';
-import { buildBlockCommand, getBlockSpec, previewCommand } from '../shared/commandBuilders';
-import type { FieldSpec } from '../shared/types';
+import { buildBlockCommand, getBlockSpec } from '../shared/commandBuilders';
+import { accentForBlock, iconForBlock } from '../blockVisuals';
+import { Icon } from '../icons';
+import type { BuiltCommand, FieldSpec } from '../shared/types';
 import type { WorkbenchNode } from '../flowTypes';
-import { Tabs, tabId, tabPanelId } from './Tabs';
 
-const INSPECTOR_TABS = ['Settings', 'Validation', 'Notes'] as const;
+function CubeIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z" />
+      <path d="M12 12v9M12 12 4 7.5M12 12l8-4.5" />
+    </svg>
+  );
+}
+
+function DuplicateIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M4 16V6a2 2 0 0 1 2-2h10" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
+    </svg>
+  );
+}
 
 interface InspectorProps {
   node: WorkbenchNode | undefined;
-  validationMessage: string;
   onSettingChange: (key: string, value: unknown) => void;
+  onDelete?: () => void;
+  onDuplicate?: () => void;
   readOnly?: boolean;
 }
 
-export function Inspector({ node, validationMessage, onSettingChange, readOnly = false }: InspectorProps) {
-  const [activeTab, setActiveTab] = useState<(typeof INSPECTOR_TABS)[number]>('Settings');
+export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOnly = false }: InspectorProps) {
   if (!node) {
     return (
       <aside className="inspector" aria-label="Inspector">
-        <div className="inspector-empty">
-          <h2>Inspector</h2>
-          <p>Select a block on the canvas to edit its settings.</p>
+        <div className="inspector-scroll">
+          <div className="empty-inspect">
+            <div className="ei-icon">
+              <CubeIcon />
+            </div>
+            <div className="ei-title">No block selected</div>
+            <div className="ei-sub">
+              Select a block on the canvas to configure its settings and preview the command it runs.
+            </div>
+          </div>
         </div>
       </aside>
     );
   }
 
-  const blockType = node.data.blockType;
-  const spec = getBlockSpec(blockType);
-  const settings = node.data.settings;
-  const command = spec.command
-    ? previewCommand(buildBlockCommand({ blockId: node.id, blockType, settings }))
-    : 'Local block';
+  const spec = getBlockSpec(node.blockType);
+  const accent = accentForBlock(spec.provider, spec.category);
+  const fields = spec.fields;
+  const command = spec.command ? buildBlockCommand({ blockId: node.id, blockType: node.blockType, settings: node.settings }) : null;
 
   return (
     <aside className="inspector" aria-label="Inspector">
-      <div className="inspector-header">
-        <div className={`inspector-provider provider-${spec.provider}`}>
-          {spec.provider === 'reddit' ? 'r/' : spec.provider === 'twitter' ? 'X' : '·'}
+      <div className="inspector-head">
+        <div className={`ihicon cat-${accent}`}>
+          <Icon name={iconForBlock(node.blockType)} size={16} />
         </div>
-        <h2>{spec.label}</h2>
-        <button className="icon-button" aria-label="Close inspector" type="button">
-          <X size={16} />
-        </button>
-      </div>
-      <div className="inspector-tabs">
-        <Tabs
-          tabs={INSPECTOR_TABS}
-          active={activeTab}
-          onChange={(tab) => setActiveTab(tab as (typeof INSPECTOR_TABS)[number])}
-          label="Inspector sections"
-          idPrefix="inspector"
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id={tabPanelId('inspector', activeTab)}
-        aria-labelledby={tabId('inspector', activeTab)}
-        tabIndex={0}
-      >
-        {activeTab === 'Settings' ? (
-          <div className="field-grid">
-            {spec.fields.map((field) => (
-              <Field
-                key={field.key}
-                field={field}
-                value={settings[field.key]}
-                onChange={(value) => onSettingChange(field.key, value)}
-                disabled={readOnly}
-              />
-            ))}
+        <div style={{ minWidth: 0 }}>
+          <div className="ihtitle">{spec.label}</div>
+          <div className="ihsub">
+            {accent === 'x' ? 'X' : accent}
+            {spec.command ? ` · ${spec.command.executable}-cli` : ''}
           </div>
-        ) : activeTab === 'Validation' ? (
-          <div className="validation-box">
-            <strong>Validation</strong>
-            <span>{validationMessage}</span>
-          </div>
-        ) : (
-          <p className="inspector-notes">Notes are local to this session and not yet persisted.</p>
-        )}
+        </div>
       </div>
-      <section className="command-preview">
-        <h3>Command Preview</h3>
-        <pre>{command}</pre>
-        <p>Credentials are injected at runtime and redacted from logs.</p>
-      </section>
+      <div className="inspector-scroll">
+        {fields.length === 0 ? (
+          <div className="field-hint" style={{ marginTop: 16 }}>
+            This block has no settings — it just forwards what it receives.
+          </div>
+        ) : null}
+        {fields.map((field) => (
+          <Field
+            key={field.key}
+            field={field}
+            value={node.settings[field.key]}
+            onChange={(value) => onSettingChange(field.key, value)}
+            disabled={readOnly}
+          />
+        ))}
+
+        <CommandPreview command={command} executable={spec.command?.executable} />
+
+        {!readOnly ? (
+          <div className="field-actions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ width: '100%', justifyContent: 'center', marginBottom: 8 }}
+              onClick={onDuplicate}
+            >
+              <DuplicateIcon /> Duplicate block
+            </button>
+            <button type="button" className="btn btn-sm btn-danger" onClick={onDelete}>
+              <TrashIcon /> Delete block
+            </button>
+          </div>
+        ) : null}
+      </div>
     </aside>
+  );
+}
+
+interface CommandPreviewProps {
+  command: BuiltCommand | null;
+  executable?: 'rdt' | 'twitter';
+}
+
+function CommandPreview({ command, executable }: CommandPreviewProps) {
+  if (!command) {
+    return (
+      <div className="cmd-preview">
+        <div className="cmd-label">execution</div>
+        <code>
+          <span style={{ color: 'var(--term-dim)' }}>{'// in-process text op — no CLI call'}</span>
+        </code>
+      </div>
+    );
+  }
+  const tokens = [command.executable, ...command.displayArgv];
+  return (
+    <div className="cmd-preview">
+      <div className="cmd-label">{executable}-cli · command preview</div>
+      <code>
+        <span style={{ color: 'var(--term-dim)' }}>$ </span>
+        {tokens.map((token, index) => {
+          const className = index === 0 ? 'bin' : token.startsWith('--') ? 'flag' : 'val';
+          return (
+            <span key={`${index}-${token}`}>
+              <span className={className}>{token}</span>
+              {index < tokens.length - 1 ? ' ' : ''}
+            </span>
+          );
+        })}
+      </code>
+      <p className="cmd-note">Credentials are injected at runtime and redacted from logs.</p>
+    </div>
   );
 }
 
@@ -100,11 +161,14 @@ interface FieldProps {
 function Field({ field, value, onChange, disabled = false }: FieldProps) {
   const fieldId = `field-${field.key}`;
   return (
-    <div className="field-row">
-      <label htmlFor={fieldId}>{field.label}</label>
+    <div className="field">
+      <label className="field-label" id={`${fieldId}-label`} htmlFor={fieldId}>
+        {field.label}
+      </label>
       {field.type === 'select' ? (
         <select
           id={fieldId}
+          className="select"
           value={String(value ?? '')}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
@@ -116,24 +180,42 @@ function Field({ field, value, onChange, disabled = false }: FieldProps) {
           ))}
         </select>
       ) : field.type === 'boolean' ? (
-        <input
-          id={fieldId}
-          type="checkbox"
-          checked={Boolean(value)}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.checked)}
-        />
+        <div className="seg" role="group" aria-labelledby={`${fieldId}-label`}>
+          <button
+            type="button"
+            className={value ? '' : 'on'}
+            aria-pressed={!value}
+            disabled={disabled}
+            onClick={() => onChange(false)}
+          >
+            no
+          </button>
+          <button
+            type="button"
+            className={value ? 'on' : ''}
+            aria-pressed={Boolean(value)}
+            disabled={disabled}
+            onClick={() => onChange(true)}
+          >
+            yes
+          </button>
+          <input id={fieldId} type="checkbox" checked={Boolean(value)} readOnly hidden aria-hidden="true" />
+        </div>
       ) : field.type === 'number' ? (
         <input
           id={fieldId}
+          className="input mono"
           type="number"
-          value={value === undefined || value === null ? '' : Number(value)}
+          min={field.min}
+          max={field.max}
+          value={value === undefined || value === null || value === '' ? '' : Number(value)}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
         />
       ) : (
         <input
           id={fieldId}
+          className={`input ${field.type === 'path' ? 'mono' : ''}`}
           type="text"
           value={String(value ?? '')}
           disabled={disabled}

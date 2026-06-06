@@ -15,7 +15,6 @@
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@xyflow/react": "^12.8.5",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
