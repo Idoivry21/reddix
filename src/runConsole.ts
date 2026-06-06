@@ -22,7 +22,12 @@ export function runRecordToConsoleState(
     steps: run.steps.map((step) => toConsoleStep(step, nodeTypeById[step.blockId])),
     logs: buildLogs(run),
     results: [],
-    history: [toHistoryEntry(run), ...(prev.history ?? [])].slice(0, MAX_HISTORY_ENTRIES)
+    // Dedupe by run id: SSE onComplete and the REST response both map the same
+    // run, so filter any existing entry for this id before prepending.
+    history: [toHistoryEntry(run), ...(prev.history ?? []).filter((entry) => entry.id !== run.id)].slice(
+      0,
+      MAX_HISTORY_ENTRIES
+    )
   };
 }
 
