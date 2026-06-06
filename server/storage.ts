@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createKeyedMutex } from './keyedMutex';
 import { safeSegmentPath } from './safeId';
 import type { PersistedFlow, Preferences, RunRecord } from './types';
 
@@ -13,6 +14,9 @@ export function createStorage(options: StorageOptions) {
   const flowsDir = path.join(options.baseDir, 'flows');
   const runsDir = path.join(options.baseDir, 'runs');
   const preferencesPath = path.join(options.baseDir, 'preferences.json');
+  // Serialize run-record read-modify-write per flow so concurrent appends
+  // (manual POST /runs + scheduler) never drop records.
+  const runWriteMutex = createKeyedMutex();
 
   async function ensureDirs() {
     await mkdir(flowsDir, { recursive: true });
@@ -45,10 +49,12 @@ export function createStorage(options: StorageOptions) {
 
     async appendRun(run: RunRecord): Promise<void> {
       const filePath = safeSegmentPath(runsDir, run.flowId, '.json');
-      await ensureDirs();
-      const runs = await readJson<RunRecord[]>(filePath, []);
-      const capped = [...runs, run].slice(-maxRunsPerFlow);
-      await writeJson(filePath, capped);
+      await runWriteMutex.run(run.flowId, async () => {
+        await ensureDirs();
+        const runs = await readJson<RunRecord[]>(filePath, []);
+        const capped = [...runs, run].slice(-maxRunsPerFlow);
+        await writeJson(filePath, capped);
+      });
     },
 
     async listRuns(flowId: string): Promise<RunRecord[]> {

@@ -79,6 +79,21 @@ describe('local JSON storage', () => {
     }
   });
 
+  it('keeps every record when appends race concurrently', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const storage = createStorage({ baseDir: dir, maxRunsPerFlow: 100 });
+
+    await Promise.all(
+      Array.from({ length: 25 }, (_unused, index) =>
+        storage.appendRun(run(`run-${index}`, 'flow-race'))
+      )
+    );
+
+    const ids = (await storage.listRuns('flow-race')).map((record) => record.id);
+    expect(ids).toHaveLength(25);
+    expect(new Set(ids).size).toBe(25);
+  });
+
   it('migrates schema-less preferences on load', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
     await writeFile(
