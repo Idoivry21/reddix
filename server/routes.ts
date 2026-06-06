@@ -32,6 +32,27 @@ export function createRoutes(options: RoutesOptions) {
     }
   });
 
+  function syncSchedule(flow: PersistedFlow): void {
+    if (flow.schedule?.enabled) {
+      scheduler.register(flow.id, {
+        intervalMs: flow.schedule.intervalMs ?? 15 * 60 * 1000,
+        enabled: true,
+        paused: flow.schedule.paused ?? false,
+        providers: flowProviders(flow)
+      });
+    } else {
+      scheduler.unregister(flow.id);
+    }
+  }
+
+  // Restore persisted schedules at startup, then start the timer.
+  void (async () => {
+    for (const flow of await options.storage.listFlows()) {
+      syncSchedule(flow);
+    }
+    scheduler.start();
+  })();
+
   router.get('/health', async (_request, response) => {
     const providers = await Promise.all(
       getProviderHealthCommands().map(async (command) => ({
@@ -90,6 +111,7 @@ export function createRoutes(options: RoutesOptions) {
       updatedAt: now
     };
     await options.storage.saveFlow(flow);
+    syncSchedule(flow);
     response.json({ flow });
   });
 
@@ -139,7 +161,25 @@ export function createRoutes(options: RoutesOptions) {
     return run;
   }
 
-  return { router, eventsHandler: sse.handler, closeClients: sse.closeAll };
+  function dispose(): void {
+    scheduler.stop();
+    sse.closeAll();
+  }
+
+  return { router, eventsHandler: sse.handler, closeClients: dispose };
+}
+
+/** Unique CLI providers a flow touches, derived from its node types. */
+function flowProviders(flow: PersistedFlow): string[] {
+  const providers = new Set<string>();
+  for (const node of flow.nodes) {
+    if (node.type.startsWith('reddit.')) {
+      providers.add('reddit');
+    } else if (node.type.startsWith('twitter.')) {
+      providers.add('twitter');
+    }
+  }
+  return [...providers];
 }
 
 function writeArtifact(dataDir: string) {
