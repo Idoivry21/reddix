@@ -1,0 +1,60 @@
+import { z } from 'zod';
+import { isSafeId } from './safeId';
+
+const safeIdSchema = z.string().refine(isSafeId, { message: 'Invalid id' });
+
+const nodeSchema = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  settings: z.record(z.unknown()).default({})
+});
+
+const edgeSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  target: z.string().min(1),
+  sourcePortId: z.string().min(1),
+  targetPortId: z.string().min(1)
+});
+
+const positionSchema = z.object({ x: z.number(), y: z.number() });
+
+const scheduleSchema = z.object({
+  enabled: z.boolean(),
+  intervalMs: z.number().int().positive().optional(),
+  paused: z.boolean().optional(),
+  nextRunAt: z.string().nullable().optional()
+});
+
+const flowSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  failFast: z.boolean().optional(),
+  nodes: z.array(nodeSchema).default([]),
+  edges: z.array(edgeSchema).default([]),
+  nodePositions: z.record(positionSchema).default({}),
+  blockSettings: z.record(z.record(z.unknown())).default({}),
+  schedule: scheduleSchema.default({ enabled: false }),
+  createdAt: z.string().optional()
+});
+
+const flowPutBodySchema = z.object({ flow: flowSchema });
+
+const runPostBodySchema = z.object({ flowId: safeIdSchema });
+
+export type FlowPutBody = z.infer<typeof flowPutBodySchema>;
+export type RunPostBody = z.infer<typeof runPostBodySchema>;
+
+export function parseFlowPutBody(body: unknown): z.SafeParseReturnType<unknown, FlowPutBody> {
+  return flowPutBodySchema.safeParse(body);
+}
+
+export function parseRunPostBody(body: unknown): z.SafeParseReturnType<unknown, RunPostBody> {
+  return runPostBodySchema.safeParse(body);
+}
+
+/** Compact, secret-free message summarizing why a body failed validation. */
+export function formatZodError(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.join('.') || 'body'}: ${issue.message}`)
+    .join('; ');
+}

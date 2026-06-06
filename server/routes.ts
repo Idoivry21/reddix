@@ -7,6 +7,8 @@ import { buildSecretMap } from '../src/shared/redaction';
 import { checkExecutable, cliExecutor } from './executor';
 import { runFlow } from './runEngine';
 import { createScheduler } from './scheduler';
+import { formatZodError, parseFlowPutBody, parseRunPostBody } from './schemas';
+import { isSafeId } from './safeId';
 import type { PersistedFlow, RunRecord } from './types';
 
 interface RoutesOptions {
@@ -55,6 +57,10 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   router.get('/flows/:flowId', async (request, response) => {
+    if (!isSafeId(request.params.flowId)) {
+      response.status(400).json({ error: 'Invalid flow id' });
+      return;
+    }
     const flow = await options.storage.getFlow(request.params.flowId);
     if (!flow) {
       response.status(404).json({ error: 'Flow not found' });
@@ -64,18 +70,27 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   router.put('/flows/:flowId', async (request, response) => {
+    if (!isSafeId(request.params.flowId)) {
+      response.status(400).json({ error: 'Invalid flow id' });
+      return;
+    }
+    const parsed = parseFlowPutBody(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: `Invalid flow body: ${formatZodError(parsed.error)}` });
+      return;
+    }
+    const incoming = parsed.data.flow;
     const now = new Date().toISOString();
-    const incoming = request.body.flow as Partial<PersistedFlow>;
     const flow: PersistedFlow = {
       schemaVersion: 1,
       id: request.params.flowId,
       name: incoming.name ?? 'Untitled Flow',
       failFast: incoming.failFast ?? false,
-      nodes: incoming.nodes ?? [],
-      edges: incoming.edges ?? [],
-      nodePositions: incoming.nodePositions ?? {},
-      blockSettings: incoming.blockSettings ?? {},
-      schedule: incoming.schedule ?? { enabled: false },
+      nodes: incoming.nodes,
+      edges: incoming.edges,
+      nodePositions: incoming.nodePositions,
+      blockSettings: incoming.blockSettings,
+      schedule: incoming.schedule,
       createdAt: incoming.createdAt ?? now,
       updatedAt: now
     };
@@ -84,16 +99,28 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   router.get('/runs/:flowId', async (request, response) => {
+    if (!isSafeId(request.params.flowId)) {
+      response.status(400).json({ error: 'Invalid flow id' });
+      return;
+    }
     response.json({ runs: await options.storage.listRuns(request.params.flowId) });
   });
 
   router.post('/runs', async (request, response) => {
-    const flowId = String(request.body.flowId ?? '');
-    const run = await runAndStore(flowId);
+    const parsed = parseRunPostBody(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: `Invalid run request: ${formatZodError(parsed.error)}` });
+      return;
+    }
+    const run = await runAndStore(parsed.data.flowId);
     response.status(run.status === 'failed' ? 422 : 200).json({ run });
   });
 
   router.post('/schedules/:flowId/trigger', async (request, response) => {
+    if (!isSafeId(request.params.flowId)) {
+      response.status(400).json({ error: 'Invalid flow id' });
+      return;
+    }
     await scheduler.triggerNow(request.params.flowId);
     response.json({ ok: true });
   });
