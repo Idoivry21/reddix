@@ -2,6 +2,7 @@ import { BlockPalette } from './components/BlockPalette';
 import { Canvas } from './components/Canvas';
 import { ConsolePanel } from './components/ConsolePanel';
 import { Inspector } from './components/Inspector';
+import { RunStatusBar } from './components/RunStatusBar';
 import { TopBar } from './components/TopBar';
 import { useWorkbenchState } from './hooks/useFlowState';
 import { useProviderHealth } from './hooks/useProviderHealth';
@@ -20,6 +21,7 @@ export function App() {
         healthLoading={health.loading}
         healthError={health.error}
       />
+      <RunStatusBar status={workbench.runStatus} />
       <div className="workbench-grid">
         <BlockPalette />
         <Canvas

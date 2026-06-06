@@ -4,7 +4,7 @@ import { MarkerType, useEdgesState, useNodesState } from '@xyflow/react';
 import { buildBlockCommand, getDefaultSettings, previewCommand } from '../shared/commandBuilders';
 import { validateFlow } from '../shared/graph';
 import { postRun, saveFlow, subscribeRunEvents, type ConsoleState } from '../api';
-import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type NodeStatus, type WorkbenchNode } from '../flowTypes';
+import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type NodeStatus, type RunStatus, type WorkbenchNode } from '../flowTypes';
 import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
 import { runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
 
@@ -69,6 +69,7 @@ export function useWorkbenchState() {
   const [lastSavedAt, setLastSavedAt] = useState('All changes saved');
   const [validationMessage, setValidationMessage] = useState('Ready to run');
   const [isRunning, setIsRunning] = useState(false);
+  const [runStatus, setRunStatus] = useState<RunStatus>({ kind: 'idle', message: 'Ready to run' });
   const [consoleState, setConsoleState] = useState<ConsoleState>(emptyConsoleState);
 
   // Keep the latest nodes available to async run + SSE handlers without stale closures.
@@ -155,6 +156,7 @@ export function useWorkbenchState() {
     if (!validation.valid) {
       const messages = validation.errors.map((error) => error.message);
       setValidationMessage(messages[0] ?? 'Flow is invalid');
+      setRunStatus({ kind: 'error', message: `Run blocked: ${messages[0] ?? 'flow is invalid'}` });
       setConsoleState((current) => ({
         ...current,
         activeTab: 'Logs',
@@ -165,6 +167,7 @@ export function useWorkbenchState() {
 
     setIsRunning(true);
     setValidationMessage('Running flow…');
+    setRunStatus({ kind: 'running', message: 'Run started' });
     setConsoleState((current) => ({ ...current, activeTab: 'Logs', logs: ['Run started…'] }));
     setNodes((current) => current.map((item) => ({ ...item, data: { ...item.data, status: 'pending' } })));
 
@@ -178,11 +181,19 @@ export function useWorkbenchState() {
       const run = await postRun(DEFAULT_FLOW_ID);
       setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeMap(nodes)));
       setNodes((current) => applyRunStatuses(current, run));
-      setValidationMessage(run.status === 'success' ? 'Run completed' : 'Run finished with errors');
-      setLastSavedAt(run.status === 'success' ? 'Run completed' : 'Run finished with errors');
+      const ok = run.status === 'success';
+      const hasFailedStep = run.steps.some((step) => step.status === 'failed');
+      setValidationMessage(ok ? 'Run completed' : 'Run finished with errors');
+      setLastSavedAt(ok ? 'Run completed' : 'Run finished with errors');
+      setRunStatus(
+        ok
+          ? { kind: 'success', message: 'Run completed successfully' }
+          : { kind: hasFailedStep ? 'error' : 'warning', message: 'Run finished with errors' }
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unexpected run error';
       setValidationMessage('Run failed');
+      setRunStatus({ kind: 'error', message: `Run failed: ${message}` });
       setConsoleState((current) => ({
         ...current,
         activeTab: 'Logs',
@@ -191,7 +202,7 @@ export function useWorkbenchState() {
     } finally {
       setIsRunning(false);
     }
-  }, [edges, nodes]);
+  }, [edges, nodes, setNodes]);
 
   return {
     nodes,
@@ -211,6 +222,7 @@ export function useWorkbenchState() {
     setConsoleState,
     selectedCommandPreview,
     isRunning,
+    runStatus,
     runNow
   };
 }
