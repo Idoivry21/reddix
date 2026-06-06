@@ -9,7 +9,19 @@ test('renders the canvas workbench and switches console tabs', async ({ page }) 
   await expect(page.getByText('X/Twitter Sources')).toBeVisible();
   await expect(page.getByText('Command Preview')).toBeVisible();
 
+  // Output Preview starts empty until a flow runs with an export block.
   await page.getByRole('button', { name: 'Output Preview' }).click();
-  await expect(page.getByRole('table')).toContainText('Local CLI automation');
+  await expect(page.getByText(/No output rows/i)).toBeVisible();
 });
 
+test('adds a block to the canvas with the keyboard', async ({ page }) => {
+  await page.goto('/');
+
+  const addButton = page.getByRole('button', { name: /^Add .* block$/i }).first();
+  await addButton.focus();
+  await page.keyboard.press('Enter');
+
+  // The newly added block is selected and shown in the Inspector.
+  await expect(page.getByLabel('Inspector')).toBeVisible();
+  await expect(page.getByText('Command Preview')).toBeVisible();
+});

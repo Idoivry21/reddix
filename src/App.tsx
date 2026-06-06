@@ -23,7 +23,7 @@ export function App() {
       />
       <RunStatusBar status={workbench.runStatus} />
       <div className="workbench-grid">
-        <BlockPalette />
+        <BlockPalette onAddBlock={workbench.addBlock} />
         <Canvas
           nodes={workbench.nodes}
           edges={workbench.edges}

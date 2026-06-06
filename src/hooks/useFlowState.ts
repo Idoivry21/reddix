@@ -5,6 +5,7 @@ import { buildBlockCommand, getDefaultSettings, previewCommand } from '../shared
 import { validateFlow } from '../shared/graph';
 import { postRun, saveFlow, subscribeRunEvents, type ConsoleState } from '../api';
 import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type NodeStatus, type RunStatus, type WorkbenchNode } from '../flowTypes';
+import { createBlockNode } from '../flowFactory';
 import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
 import { runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
 
@@ -79,6 +80,24 @@ export function useWorkbenchState() {
   const selectedNode = useMemo(
     () => nodes.find((item) => item.id === selectedNodeId),
     [nodes, selectedNodeId]
+  );
+
+  const addCounter = useRef(0);
+
+  const addBlock = useCallback(
+    (blockType: string) => {
+      addCounter.current += 1;
+      const offset = addCounter.current;
+      const node = createBlockNode(
+        blockType,
+        { x: 160 + (offset % 5) * 40, y: 140 + (offset % 5) * 40 },
+        `add-${offset}`
+      );
+      setNodes((current) => [...current, node]);
+      setSelectedNodeId(node.id);
+      setLastSavedAt('Unsaved changes');
+    },
+    [setNodes]
   );
 
   const updateNodeSettings = useCallback(
@@ -215,6 +234,7 @@ export function useWorkbenchState() {
     setSelectedNodeId,
     selectedNode,
     updateNodeSettings,
+    addBlock,
     lastSavedAt,
     validationMessage,
     setValidationMessage,

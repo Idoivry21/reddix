@@ -10,7 +10,11 @@ const groups = [
   { title: 'Output', provider: 'local', category: 'Output' }
 ];
 
-export function BlockPalette() {
+interface BlockPaletteProps {
+  onAddBlock: (blockType: string) => void;
+}
+
+export function BlockPalette({ onAddBlock }: BlockPaletteProps) {
   const [query, setQuery] = useState('');
   const specs = useMemo(() => listBlockSpecs(), []);
 
@@ -33,7 +37,7 @@ export function BlockPalette() {
             <section className="palette-group" key={group.title}>
               <h2>{group.title}</h2>
               {items.map((spec) => (
-                <PaletteItem key={spec.type} spec={spec} />
+                <PaletteItem key={spec.type} spec={spec} onAddBlock={onAddBlock} />
               ))}
             </section>
           );
@@ -44,11 +48,26 @@ export function BlockPalette() {
   );
 }
 
-function PaletteItem({ spec }: { spec: BlockSpec }) {
+interface PaletteItemProps {
+  spec: BlockSpec;
+  onAddBlock: (blockType: string) => void;
+}
+
+function PaletteItem({ spec, onAddBlock }: PaletteItemProps) {
   return (
     <div
       className={`palette-item provider-${spec.provider}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`Add ${spec.label} block`}
       draggable
+      onClick={() => onAddBlock(spec.type)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onAddBlock(spec.type);
+        }
+      }}
       onDragStart={(event) => {
         event.dataTransfer.setData('application/reddix-block', spec.type);
         event.dataTransfer.effectAllowed = 'move';
