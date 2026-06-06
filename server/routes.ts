@@ -165,7 +165,14 @@ export function createRoutes(options: RoutesOptions) {
     }
   }
 
-  return router;
+  function closeClients() {
+    for (const client of clients.values()) {
+      client.response.end();
+    }
+    clients.clear();
+  }
+
+  return { router, closeClients };
 }
 
 function writeArtifact(dataDir: string) {
