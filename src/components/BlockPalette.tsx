@@ -20,9 +20,15 @@ export function BlockPalette({ onAddBlock }: BlockPaletteProps) {
 
   return (
     <aside className="palette" aria-label="Block palette">
-      <label className="search-box">
+      <label className="search-box" htmlFor="palette-search">
         <Search size={15} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search blocks..." />
+        <input
+          id="palette-search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search blocks..."
+          aria-label="Search blocks"
+        />
         <kbd>⌘K</kbd>
       </label>
       <div className="palette-scroll">

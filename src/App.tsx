@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BlockPalette } from './components/BlockPalette';
 import { Canvas } from './components/Canvas';
 import { ConsolePanel } from './components/ConsolePanel';
@@ -10,6 +11,17 @@ import { useProviderHealth } from './hooks/useProviderHealth';
 export function App() {
   const workbench = useWorkbenchState();
   const health = useProviderHealth();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        document.getElementById('palette-search')?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <main className="workbench-shell">

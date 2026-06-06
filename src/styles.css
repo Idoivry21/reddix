@@ -20,10 +20,35 @@
   --output: #16a34a;
   --success: #16a34a;
   --shadow: 0 8px 26px rgba(20, 32, 48, 0.08);
+  --focus-ring: #1d6ff2;
+  --warning: #d97706;
+  --error: #dc2626;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* T402: visible keyboard focus on every interactive surface. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role='button']:focus-visible,
+[role='tab']:focus-visible,
+[tabindex]:focus-visible,
+.canvas-shell:focus-visible,
+.palette-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.search-box:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 10px;
 }
 
 body {

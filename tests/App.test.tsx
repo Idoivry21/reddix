@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { App } from '../src/App';
 
 describe('App scaffold', () => {
@@ -12,5 +12,11 @@ describe('App scaffold', () => {
     expect(screen.getAllByText('Search Reddit').length).toBeGreaterThan(1);
     expect(screen.getByText('Command Preview')).toBeInTheDocument();
     expect(screen.getByText('Command Trace')).toBeInTheDocument();
+  });
+
+  it('focuses the palette search on Cmd-K (T402)', () => {
+    render(<App />);
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(document.activeElement).toBe(screen.getByLabelText('Search blocks'));
   });
 });
