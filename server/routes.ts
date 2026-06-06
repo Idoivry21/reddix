@@ -6,6 +6,7 @@ import { getProviderHealthCommands } from '../src/shared/commandBuilders';
 import { buildSecretMap } from '../src/shared/redaction';
 import { checkExecutable, cliExecutor } from './executor';
 import { runFlow } from './runEngine';
+import { createRateLimiter } from './rateLimiter';
 import { createScheduler } from './scheduler';
 import { formatZodError, parseFlowPutBody, parseRunPostBody } from './schemas';
 import { isSafeId, resolveContainedPath } from './safeId';
@@ -15,11 +16,18 @@ import type { PersistedFlow, RunRecord } from './types';
 interface RoutesOptions {
   storage: ReturnType<typeof import('./storage').createStorage>;
   dataDir: string;
+  /** Minimum gap between manual /runs triggers per flow (ms). */
+  runMinIntervalMs?: number;
 }
 
 export function createRoutes(options: RoutesOptions) {
   const router = express.Router();
   const sse = createSseHub();
+  // Throttle the subprocess-spawning /runs route per flow to protect accounts
+  // and the host from rapid repeated triggers.
+  const runRateLimiter = createRateLimiter({
+    minIntervalMs: Number(options.runMinIntervalMs ?? 3000)
+  });
 
   const scheduler = createScheduler({
     minIntervalMs: 15 * 60 * 1000,
@@ -127,6 +135,10 @@ export function createRoutes(options: RoutesOptions) {
     const parsed = parseRunPostBody(request.body);
     if (!parsed.success) {
       response.status(400).json({ error: `Invalid run request: ${formatZodError(parsed.error)}` });
+      return;
+    }
+    if (!runRateLimiter.tryAcquire(parsed.data.flowId)) {
+      response.status(429).json({ error: 'Too many runs for this flow; please wait before retrying' });
       return;
     }
     const run = await runAndStore(parsed.data.flowId);

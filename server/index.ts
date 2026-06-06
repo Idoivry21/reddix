@@ -1,15 +1,15 @@
 import express from 'express';
 import cors from 'cors';
-import path from 'node:path';
 import { buildCorsOptions } from './cors';
 import { csrfGuard } from './csrfGuard';
+import { validateEnv, summarizeAuthPresence } from './env';
 import { errorHandler } from './errorHandler';
 import { createRoutes } from './routes';
 import { createStorage } from './storage';
 
 const app = express();
-const port = Number(process.env.PORT ?? 8787);
-const dataDir = process.env.REDDIX_DATA_DIR ?? path.join(process.cwd(), '.reddix-data');
+const { port, dataDir } = validateEnv(process.env);
+console.log(`[reddix] auth tokens: ${summarizeAuthPresence(process.env)}`);
 const storage = createStorage({ baseDir: dataDir });
 
 const { router, eventsHandler, closeClients } = createRoutes({ storage, dataDir });
