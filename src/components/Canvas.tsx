@@ -54,6 +54,10 @@ function CanvasInner({
   readOnly = false
 }: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // Keep latest nodes in a ref so the connection validator stays referentially
+  // stable instead of being rebuilt on every drag frame.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
   const { screenToFlowPosition, fitView } = useReactFlow();
   const [history, setHistory] = useState<Array<{ nodes: WorkbenchNode[]; edges: Edge[] }>>([]);
   const [future, setFuture] = useState<Array<{ nodes: WorkbenchNode[]; edges: Edge[] }>>([]);
@@ -75,8 +79,9 @@ function CanvasInner({
 
   const isValidConnection: IsValidConnection<Edge> = useCallback(
     (connection: Connection | Edge) => {
-      const source = nodes.find((node) => node.id === connection.source);
-      const target = nodes.find((node) => node.id === connection.target);
+      const current = nodesRef.current;
+      const source = current.find((node) => node.id === connection.source);
+      const target = current.find((node) => node.id === connection.target);
       if (!source || !target || !connection.sourceHandle || !connection.targetHandle) {
         return false;
       }
@@ -89,7 +94,7 @@ function CanvasInner({
       setValidationMessage(result.valid ? 'Ready to run' : result.reason);
       return result.valid;
     },
-    [nodes, setValidationMessage]
+    [setValidationMessage]
   );
 
   const onConnect = useCallback(

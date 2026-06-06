@@ -73,10 +73,6 @@ export function useWorkbenchState() {
   const [runStatus, setRunStatus] = useState<RunStatus>({ kind: 'idle', message: 'Ready to run' });
   const [consoleState, setConsoleState] = useState<ConsoleState>(emptyConsoleState);
 
-  // Keep the latest nodes available to async run + SSE handlers without stale closures.
-  const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
-
   const selectedNode = useMemo(
     () => nodes.find((item) => item.id === selectedNodeId),
     [nodes, selectedNodeId]
@@ -114,17 +110,23 @@ export function useWorkbenchState() {
     [setNodes]
   );
 
+  // Gate command rebuilds on the selected node's identity/type/settings, not on
+  // the whole nodes array — so dragging an unrelated node won't recompute this.
+  const selectedBlockType = selectedNode?.data.blockType;
+  const selectedSettings = selectedNode?.data.settings;
   const selectedCommand = useMemo(() => {
-    const selected = nodes.find((item) => item.id === selectedNodeId);
-    if (!selected || !selected.data.blockType.match(/^(reddit|twitter)\./)) {
+    if (!selectedNode || !selectedBlockType || !/^(reddit|twitter)\./.test(selectedBlockType)) {
       return undefined;
     }
     return buildBlockCommand({
-      blockId: selected.id,
-      blockType: selected.data.blockType,
-      settings: selected.data.settings
+      blockId: selectedNode.id,
+      blockType: selectedBlockType,
+      settings: selectedSettings ?? {}
     });
-  }, [nodes, selectedNodeId]);
+    // selectedNode is intentionally excluded; the three primitive/ref deps below
+    // change only when the selection or its settings actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId, selectedBlockType, selectedSettings]);
 
   // Reflect the selected CLI block in the Command Trace preview.
   useEffect(() => {
@@ -134,6 +136,12 @@ export function useWorkbenchState() {
   const selectedCommandPreview = useMemo(() => {
     return selectedCommand ? previewCommand(selectedCommand) : 'Local transform block';
   }, [selectedCommand]);
+
+  // Memoize the id→blockType map and expose it via a ref so per-step SSE
+  // handlers don't rebuild it on every event.
+  const nodeTypeById = useMemo(() => nodeTypeMap(nodes), [nodes]);
+  const nodeTypeByIdRef = useRef(nodeTypeById);
+  nodeTypeByIdRef.current = nodeTypeById;
 
   const setNodeStatus = useCallback(
     (nodeId: string, status: WorkbenchNode['data']['status']) => {
@@ -156,13 +164,12 @@ export function useWorkbenchState() {
         if (!step) {
           return;
         }
-        const consoleStep = runStepToConsoleStep(step, nodeTypeMap(nodesRef.current)[step.blockId]);
+        const consoleStep = runStepToConsoleStep(step, nodeTypeByIdRef.current[step.blockId]);
         setConsoleState((current) => ({ ...current, steps: upsertStep(current.steps, consoleStep) }));
         setNodeStatus(step.blockId, nodeStatusFromStep(step.status));
       },
       onComplete: ({ run }) => {
-        const nodeTypeById = nodeTypeMap(nodesRef.current);
-        setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeById));
+        setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeByIdRef.current));
         setNodes((current) => applyRunStatuses(current, run));
       }
     });
@@ -198,7 +205,7 @@ export function useWorkbenchState() {
       });
       await saveFlow(DEFAULT_FLOW_ID, body);
       const run = await postRun(DEFAULT_FLOW_ID);
-      setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeMap(nodes)));
+      setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeByIdRef.current));
       setNodes((current) => applyRunStatuses(current, run));
       const ok = run.status === 'success';
       const hasFailedStep = run.steps.some((step) => step.status === 'failed');
