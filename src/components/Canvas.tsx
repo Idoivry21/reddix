@@ -18,6 +18,7 @@ import { BlockNode } from './BlockNode';
 import type { WorkbenchNode, WorkbenchNodeData } from '../flowTypes';
 import { canConnect } from '../shared/graph';
 import { getBlockSpec, getDefaultSettings } from '../shared/commandBuilders';
+import { historyDecision } from '../historyControl';
 
 const nodeTypes = { workbenchBlock: BlockNode };
 
@@ -67,9 +68,13 @@ function CanvasInner({
     setFuture([]);
   }, [edges, nodes]);
 
+  const draggingRef = useRef(false);
+
   const onNodesChange = useCallback(
     (changes: NodeChange<WorkbenchNode>[]) => {
-      if (changes.some((change) => change.type !== 'select')) {
+      const decision = historyDecision(changes, draggingRef.current);
+      draggingRef.current = decision.dragging;
+      if (decision.snapshot) {
         pushHistory();
       }
       onNodesChangeBase(changes);
