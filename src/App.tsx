@@ -7,10 +7,12 @@ import { RunStatusBar } from './components/RunStatusBar';
 import { TopBar } from './components/TopBar';
 import { useWorkbenchState } from './hooks/useFlowState';
 import { useProviderHealth } from './hooks/useProviderHealth';
+import { useIsMobile } from './hooks/useIsMobile';
 
 export function App() {
   const workbench = useWorkbenchState();
   const health = useProviderHealth();
+  const readOnly = useIsMobile();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -24,7 +26,7 @@ export function App() {
   }, []);
 
   return (
-    <main className="workbench-shell">
+    <main className={`workbench-shell ${readOnly ? 'read-only' : ''}`}>
       <TopBar
         lastSavedAt={workbench.lastSavedAt}
         onRun={workbench.runNow}
@@ -32,10 +34,16 @@ export function App() {
         providers={health.providers}
         healthLoading={health.loading}
         healthError={health.error}
+        readOnly={readOnly}
       />
       <RunStatusBar status={workbench.runStatus} />
+      {readOnly ? (
+        <div className="mobile-readonly-banner" role="note">
+          Read-only on mobile — authoring is disabled. View runs and history only.
+        </div>
+      ) : null}
       <div className="workbench-grid">
-        <BlockPalette onAddBlock={workbench.addBlock} />
+        <BlockPalette onAddBlock={workbench.addBlock} readOnly={readOnly} />
         <Canvas
           nodes={workbench.nodes}
           edges={workbench.edges}
@@ -46,6 +54,7 @@ export function App() {
           selectedNodeId={workbench.selectedNodeId}
           onSelectNode={workbench.setSelectedNodeId}
           setValidationMessage={workbench.setValidationMessage}
+          readOnly={readOnly}
         />
         <Inspector
           node={workbench.selectedNode}
@@ -53,6 +62,7 @@ export function App() {
           onSettingChange={(key, value) =>
             workbench.selectedNode && workbench.updateNodeSettings(workbench.selectedNode.id, key, value)
           }
+          readOnly={readOnly}
         />
         <ConsolePanel
           state={workbench.consoleState}

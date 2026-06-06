@@ -31,6 +31,7 @@ interface CanvasProps {
   selectedNodeId: string;
   onSelectNode: (nodeId: string) => void;
   setValidationMessage: (message: string) => void;
+  readOnly?: boolean;
 }
 
 export function Canvas(props: CanvasProps) {
@@ -49,7 +50,8 @@ function CanvasInner({
   onNodesChange: onNodesChangeBase,
   onEdgesChange,
   onSelectNode,
-  setValidationMessage
+  setValidationMessage,
+  readOnly = false
 }: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -104,6 +106,9 @@ function CanvasInner({
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
+      if (readOnly) {
+        return;
+      }
       const blockType = event.dataTransfer.getData('application/reddix-block');
       if (!blockType) {
         return;
@@ -125,7 +130,7 @@ function CanvasInner({
       setNodes((current) => [...current, node]);
       onSelectNode(node.id);
     },
-    [onSelectNode, pushHistory, screenToFlowPosition, setNodes]
+    [onSelectNode, pushHistory, readOnly, screenToFlowPosition, setNodes]
   );
 
   const selectedIds = useMemo(() => nodes.filter((node) => node.selected).map((node) => node.id), [nodes]);
@@ -189,6 +194,13 @@ function CanvasInner({
       }}
       onDrop={onDrop}
       onKeyDown={(event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === '0') {
+          fitView();
+          return;
+        }
+        if (readOnly) {
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
           event.shiftKey ? redo() : undo();
         }
@@ -197,9 +209,6 @@ function CanvasInner({
         }
         if (event.key === 'Delete' || event.key === 'Backspace') {
           deleteSelection();
-        }
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === '0') {
-          fitView();
         }
       }}
       tabIndex={0}
@@ -214,8 +223,11 @@ function CanvasInner({
         onNodeClick={(_, node) => onSelectNode(node.id)}
         nodeTypes={nodeTypes}
         fitView
-        multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
-        deleteKeyCode={['Backspace', 'Delete']}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        edgesFocusable={!readOnly}
+        multiSelectionKeyCode={readOnly ? null : ['Meta', 'Control', 'Shift']}
+        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
       >
         <Background gap={18} size={1} color="#d9dee8" />
         <Controls position="bottom-left" />

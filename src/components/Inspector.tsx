@@ -11,9 +11,10 @@ interface InspectorProps {
   node: WorkbenchNode | undefined;
   validationMessage: string;
   onSettingChange: (key: string, value: unknown) => void;
+  readOnly?: boolean;
 }
 
-export function Inspector({ node, validationMessage, onSettingChange }: InspectorProps) {
+export function Inspector({ node, validationMessage, onSettingChange, readOnly = false }: InspectorProps) {
   const [activeTab, setActiveTab] = useState<(typeof INSPECTOR_TABS)[number]>('Settings');
   if (!node) {
     return (
@@ -67,6 +68,7 @@ export function Inspector({ node, validationMessage, onSettingChange }: Inspecto
                 field={field}
                 value={settings[field.key]}
                 onChange={(value) => onSettingChange(field.key, value)}
+                disabled={readOnly}
               />
             ))}
           </div>
@@ -92,15 +94,21 @@ interface FieldProps {
   field: FieldSpec;
   value: unknown;
   onChange: (value: unknown) => void;
+  disabled?: boolean;
 }
 
-function Field({ field, value, onChange }: FieldProps) {
+function Field({ field, value, onChange, disabled = false }: FieldProps) {
   const fieldId = `field-${field.key}`;
   return (
     <div className="field-row">
       <label htmlFor={fieldId}>{field.label}</label>
       {field.type === 'select' ? (
-        <select id={fieldId} value={String(value ?? '')} onChange={(event) => onChange(event.target.value)}>
+        <select
+          id={fieldId}
+          value={String(value ?? '')}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        >
           {(field.options ?? []).map((option) => (
             <option key={String(option.value)} value={String(option.value)}>
               {option.label}
@@ -112,6 +120,7 @@ function Field({ field, value, onChange }: FieldProps) {
           id={fieldId}
           type="checkbox"
           checked={Boolean(value)}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.checked)}
         />
       ) : field.type === 'number' ? (
@@ -119,6 +128,7 @@ function Field({ field, value, onChange }: FieldProps) {
           id={fieldId}
           type="number"
           value={value === undefined || value === null ? '' : Number(value)}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
         />
       ) : (
@@ -126,6 +136,7 @@ function Field({ field, value, onChange }: FieldProps) {
           id={fieldId}
           type="text"
           value={String(value ?? '')}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
       )}

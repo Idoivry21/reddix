@@ -8,6 +8,7 @@ interface TopBarProps {
   providers?: ProviderHealth[];
   healthLoading?: boolean;
   healthError?: boolean;
+  readOnly?: boolean;
 }
 
 export function TopBar({
@@ -16,7 +17,8 @@ export function TopBar({
   isRunning = false,
   providers = [],
   healthLoading = false,
-  healthError = false
+  healthError = false,
+  readOnly = false
 }: TopBarProps) {
   return (
     <header className="top-bar">
@@ -38,7 +40,12 @@ export function TopBar({
           loading={healthLoading}
           error={healthError}
         />
-        <button className="primary-button" onClick={onRun} disabled={isRunning}>
+        <button
+          className="primary-button"
+          onClick={onRun}
+          disabled={isRunning || readOnly}
+          title={readOnly ? 'Read-only on mobile' : undefined}
+        >
           <Play size={15} fill="currentColor" /> {isRunning ? 'Running…' : 'Run Now'}
         </button>
         <button className="secondary-button">

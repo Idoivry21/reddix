@@ -12,9 +12,10 @@ const groups = [
 
 interface BlockPaletteProps {
   onAddBlock: (blockType: string) => void;
+  readOnly?: boolean;
 }
 
-export function BlockPalette({ onAddBlock }: BlockPaletteProps) {
+export function BlockPalette({ onAddBlock, readOnly = false }: BlockPaletteProps) {
   const [query, setQuery] = useState('');
   const specs = useMemo(() => listBlockSpecs(), []);
 
@@ -43,7 +44,7 @@ export function BlockPalette({ onAddBlock }: BlockPaletteProps) {
             <section className="palette-group" key={group.title}>
               <h2>{group.title}</h2>
               {items.map((spec) => (
-                <PaletteItem key={spec.type} spec={spec} onAddBlock={onAddBlock} />
+                <PaletteItem key={spec.type} spec={spec} onAddBlock={onAddBlock} readOnly={readOnly} />
               ))}
             </section>
           );
@@ -57,24 +58,33 @@ export function BlockPalette({ onAddBlock }: BlockPaletteProps) {
 interface PaletteItemProps {
   spec: BlockSpec;
   onAddBlock: (blockType: string) => void;
+  readOnly?: boolean;
 }
 
-function PaletteItem({ spec, onAddBlock }: PaletteItemProps) {
+function PaletteItem({ spec, onAddBlock, readOnly = false }: PaletteItemProps) {
   return (
     <div
       className={`palette-item provider-${spec.provider}`}
       role="button"
-      tabIndex={0}
+      tabIndex={readOnly ? -1 : 0}
+      aria-disabled={readOnly}
       aria-label={`Add ${spec.label} block`}
-      draggable
-      onClick={() => onAddBlock(spec.type)}
+      draggable={!readOnly}
+      onClick={readOnly ? undefined : () => onAddBlock(spec.type)}
       onKeyDown={(event) => {
+        if (readOnly) {
+          return;
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onAddBlock(spec.type);
         }
       }}
       onDragStart={(event) => {
+        if (readOnly) {
+          event.preventDefault();
+          return;
+        }
         event.dataTransfer.setData('application/reddix-block', spec.type);
         event.dataTransfer.effectAllowed = 'move';
       }}
