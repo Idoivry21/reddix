@@ -8,4 +8,6 @@ coverage/
 .reddix-data/
 outputs/
 .playwright-mcp/
+test-results/
+playwright-report/
 .DS_Store
