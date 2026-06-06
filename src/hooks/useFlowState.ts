@@ -74,6 +74,25 @@ export function useWorkbenchState() {
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
 
+  const selectedNode = useMemo(
+    () => nodes.find((item) => item.id === selectedNodeId),
+    [nodes, selectedNodeId]
+  );
+
+  const updateNodeSettings = useCallback(
+    (nodeId: string, key: string, value: unknown) => {
+      setNodes((current) =>
+        current.map((item) =>
+          item.id === nodeId
+            ? { ...item, data: { ...item.data, settings: { ...item.data.settings, [key]: value } } }
+            : item
+        )
+      );
+      setLastSavedAt('Unsaved changes');
+    },
+    [setNodes]
+  );
+
   const selectedCommand = useMemo(() => {
     const selected = nodes.find((item) => item.id === selectedNodeId);
     if (!selected || !selected.data.blockType.match(/^(reddit|twitter)\./)) {
@@ -167,6 +186,8 @@ export function useWorkbenchState() {
     onEdgesChange,
     selectedNodeId,
     setSelectedNodeId,
+    selectedNode,
+    updateNodeSettings,
     lastSavedAt,
     validationMessage,
     setValidationMessage,

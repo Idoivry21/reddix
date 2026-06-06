@@ -25,8 +25,11 @@ export function App() {
           setValidationMessage={workbench.setValidationMessage}
         />
         <Inspector
-          selectedNodeId={workbench.selectedNodeId}
+          node={workbench.selectedNode}
           validationMessage={workbench.validationMessage}
+          onSettingChange={(key, value) =>
+            workbench.selectedNode && workbench.updateNodeSettings(workbench.selectedNode.id, key, value)
+          }
         />
         <ConsolePanel
           state={workbench.consoleState}

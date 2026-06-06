@@ -1,45 +1,59 @@
 import { X } from 'lucide-react';
 import { buildBlockCommand, getBlockSpec, previewCommand } from '../shared/commandBuilders';
+import type { FieldSpec } from '../shared/types';
+import type { WorkbenchNode } from '../flowTypes';
 
 interface InspectorProps {
-  selectedNodeId: string;
+  node: WorkbenchNode | undefined;
   validationMessage: string;
+  onSettingChange: (key: string, value: unknown) => void;
 }
 
-export function Inspector({ selectedNodeId, validationMessage }: InspectorProps) {
-  const blockType = selectedNodeId.includes('twitter') ? 'twitter.searchTweets' : 'reddit.searchPosts';
+export function Inspector({ node, validationMessage, onSettingChange }: InspectorProps) {
+  if (!node) {
+    return (
+      <aside className="inspector" aria-label="Inspector">
+        <div className="inspector-empty">
+          <h2>Inspector</h2>
+          <p>Select a block on the canvas to edit its settings.</p>
+        </div>
+      </aside>
+    );
+  }
+
+  const blockType = node.data.blockType;
   const spec = getBlockSpec(blockType);
-  const settings = spec.defaultSettings;
+  const settings = node.data.settings;
   const command = spec.command
-    ? previewCommand(buildBlockCommand({ blockId: selectedNodeId, blockType, settings }))
+    ? previewCommand(buildBlockCommand({ blockId: node.id, blockType, settings }))
     : 'Local block';
 
   return (
     <aside className="inspector" aria-label="Inspector">
       <div className="inspector-header">
-        <div className={`inspector-provider provider-${spec.provider}`}>{spec.provider === 'reddit' ? 'r/' : 'X'}</div>
+        <div className={`inspector-provider provider-${spec.provider}`}>
+          {spec.provider === 'reddit' ? 'r/' : spec.provider === 'twitter' ? 'X' : '·'}
+        </div>
         <h2>{spec.label}</h2>
-        <button className="icon-button" aria-label="Close inspector">
+        <button className="icon-button" aria-label="Close inspector" type="button">
           <X size={16} />
         </button>
       </div>
       <nav className="inspector-tabs">
-        <button className="active">Settings</button>
-        <button>Validation</button>
-        <button>Notes</button>
+        <button className="active" type="button">
+          Settings
+        </button>
+        <button type="button">Validation</button>
+        <button type="button">Notes</button>
       </nav>
       <div className="field-grid">
-        {spec.fields.slice(0, 7).map((field) => (
-          <label key={field.key}>
-            <span>{field.label}</span>
-            {field.type === 'select' ? (
-              <select defaultValue={String(settings[field.key] ?? '')}>
-                <option>{String(settings[field.key] ?? 'default')}</option>
-              </select>
-            ) : (
-              <input defaultValue={String(settings[field.key] ?? '')} type={field.type === 'number' ? 'number' : 'text'} />
-            )}
-          </label>
+        {spec.fields.map((field) => (
+          <Field
+            key={field.key}
+            field={field}
+            value={settings[field.key]}
+            onChange={(value) => onSettingChange(field.key, value)}
+          />
         ))}
       </div>
       <div className="validation-box">
@@ -55,3 +69,47 @@ export function Inspector({ selectedNodeId, validationMessage }: InspectorProps)
   );
 }
 
+interface FieldProps {
+  field: FieldSpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}
+
+function Field({ field, value, onChange }: FieldProps) {
+  const fieldId = `field-${field.key}`;
+  return (
+    <div className="field-row">
+      <label htmlFor={fieldId}>{field.label}</label>
+      {field.type === 'select' ? (
+        <select id={fieldId} value={String(value ?? '')} onChange={(event) => onChange(event.target.value)}>
+          {(field.options ?? []).map((option) => (
+            <option key={String(option.value)} value={String(option.value)}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : field.type === 'boolean' ? (
+        <input
+          id={fieldId}
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+      ) : field.type === 'number' ? (
+        <input
+          id={fieldId}
+          type="number"
+          value={value === undefined || value === null ? '' : Number(value)}
+          onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
+        />
+      ) : (
+        <input
+          id={fieldId}
+          type="text"
+          value={String(value ?? '')}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+    </div>
+  );
+}
