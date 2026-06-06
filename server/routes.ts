@@ -150,6 +150,12 @@ export function createRoutes(options: RoutesOptions) {
       response.status(400).json({ error: 'Invalid flow id' });
       return;
     }
+    // Same per-flow gate as /runs: single-flight stops overlap, but this still
+    // spawns a subprocess, so rate-limit it too.
+    if (!runRateLimiter.tryAcquire(request.params.flowId)) {
+      response.status(429).json({ error: 'Too many runs for this flow; please wait before retrying' });
+      return;
+    }
     await scheduler.triggerNow(request.params.flowId);
     response.json({ ok: true });
   });

@@ -36,4 +36,15 @@ describe('createCappedBuffer', () => {
     buffer.append('a');
     expect(buffer.truncated).toBe(true);
   });
+
+  it('never lets byteLength exceed the cap on a multi-byte boundary', () => {
+    // Cap of 4, two euro signs (3 bytes each): the second cannot fit and the
+    // partial slice must not push byteLength over the cap via U+FFFD.
+    const buffer = createCappedBuffer(4);
+    buffer.append('€');
+    buffer.append('€');
+    expect(buffer.truncated).toBe(true);
+    expect(buffer.byteLength).toBeLessThanOrEqual(4);
+    expect(Buffer.byteLength(buffer.value, 'utf8')).toBeLessThanOrEqual(4);
+  });
 });

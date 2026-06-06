@@ -28,9 +28,15 @@ export function createCappedBuffer(maxBytes: number): CappedBuffer {
         return;
       }
       if (remaining > 0) {
+        // Slicing on a byte boundary inside a multi-byte codepoint yields a
+        // U+FFFD replacement char (3 bytes) that can exceed `remaining`, so only
+        // keep the partial slice when it still fits the cap.
         const slice = Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8');
-        parts.push(slice);
-        bytes += Buffer.byteLength(slice, 'utf8');
+        const sliceBytes = Buffer.byteLength(slice, 'utf8');
+        if (bytes + sliceBytes <= maxBytes) {
+          parts.push(slice);
+          bytes += sliceBytes;
+        }
       }
       truncated = true;
     },

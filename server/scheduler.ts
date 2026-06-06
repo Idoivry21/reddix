@@ -98,7 +98,7 @@ export function createScheduler(options: SchedulerOptions) {
       for (const provider of state.providers) {
         lastProviderFireAt.set(provider, at);
       }
-      state.nextRunAt = computeNextRunAt(state.intervalMs, at);
+      schedules.set(flowId, { ...state, nextRunAt: computeNextRunAt(state.intervalMs, at) });
       await triggerNow(flowId);
     }
   }
