@@ -4,6 +4,8 @@ import { buildTimestampedExportPath, serializeCsv, serializeJson, serializeMarkd
 import type { FlowEdgeModel, FlowNodeModel } from '../src/shared/graph';
 import { validateFlow } from '../src/shared/graph';
 import { normalizeRedditPayload, normalizeTwitterPayload } from '../src/shared/normalizers';
+import { redactSecrets } from '../src/shared/redaction';
+import type { SecretMap } from '../src/shared/redaction';
 import { applyEngagementFilter, applyFilterText, applyLimit } from '../src/shared/transforms';
 import type { SocialItem } from '../src/shared/types';
 import type { CliExecutor, FlowDefinition, RunRecord, RunStep } from './types';
@@ -12,12 +14,20 @@ interface RunFlowOptions {
   flow: FlowDefinition;
   executor: CliExecutor;
   writeArtifact: (filePath: string, contents: string) => Promise<{ path: string; bytes: number }>;
+  /**
+   * Secret values (e.g. auth tokens) to scrub from every persisted/broadcast
+   * string. Security invariant 2: secrets must never reach run records, the SSE
+   * stream, or logs even if a CLI echoes them to stderr/stdout.
+   */
+  secrets?: SecretMap;
   now?: () => Date;
   emit?: (event: { type: string; step?: RunStep }) => void;
 }
 
 export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   const now = options.now ?? (() => new Date());
+  const secrets = options.secrets ?? {};
+  const redact = (value: string): string => redactSecrets(value, secrets);
   const startedAt = now().toISOString();
   const validation = validateFlow(options.flow);
   if (!validation.valid) {
@@ -71,11 +81,11 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
             status: 'failed',
             argv: command.displayArgv,
             exitCode: result.exitCode,
-            stdoutSummary: summarizeStdout(result.stdout),
-            stderr: result.stderr,
+            stdoutSummary: summarizeStdout(redact(result.stdout)),
+            stderr: redact(result.stderr),
             startedAt: stepStarted,
             endedAt: now().toISOString(),
-            error: result.stderr || `Command exited with ${result.exitCode}`
+            error: redact(result.stderr || `Command exited with ${result.exitCode}`)
           };
           steps.push(step);
           options.emit?.({ type: 'step', step });
@@ -98,8 +108,8 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
           status: 'success',
           argv: command.displayArgv,
           exitCode: result.exitCode,
-          stdoutSummary: summarizeStdout(result.stdout),
-          stderr: result.stderr,
+          stdoutSummary: summarizeStdout(redact(result.stdout)),
+          stderr: redact(result.stderr),
           startedAt: stepStarted,
           endedAt: now().toISOString()
         };
@@ -129,7 +139,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
       failed = true;
       const step = makeStep(node.id, 'failed', now, {
         startedAt: stepStarted,
-        error: error instanceof Error ? error.message : String(error)
+        error: redact(error instanceof Error ? error.message : String(error))
       });
       steps.push(step);
       options.emit?.({ type: 'step', step });

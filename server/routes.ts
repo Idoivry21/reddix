@@ -3,6 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { listBlockSpecs } from '../src/shared/commandBuilders';
 import { getProviderHealthCommands } from '../src/shared/commandBuilders';
+import { buildSecretMap } from '../src/shared/redaction';
 import { checkExecutable, cliExecutor } from './executor';
 import { runFlow } from './runEngine';
 import { createScheduler } from './scheduler';
@@ -121,6 +122,7 @@ export function createRoutes(options: RoutesOptions) {
     const run = await runFlow({
       flow,
       executor: cliExecutor,
+      secrets: buildSecretMap(process.env),
       writeArtifact: writeArtifact(options.dataDir),
       emit: (event) => broadcast('run-step', event)
     });
