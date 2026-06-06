@@ -1,4 +1,5 @@
-import type { BuiltCommand } from './shared/types';
+import type { BuiltCommand, PersistedFlow, RunRecord } from './shared/types';
+import type { FlowRequestBody } from './flowSerialization';
 
 export interface ConsoleRunStep {
   id: string;
@@ -25,3 +26,74 @@ export async function fetchHealth() {
   return response.json();
 }
 
+export async function saveFlow(flowId: string, body: FlowRequestBody): Promise<PersistedFlow> {
+  const response = await fetch(`/api/flows/${flowId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to save flow (status ${response.status})`);
+  }
+  const payload = (await response.json()) as { flow: PersistedFlow };
+  return payload.flow;
+}
+
+export async function postRun(flowId: string): Promise<RunRecord> {
+  const response = await fetch('/api/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flowId })
+  });
+  const payload = (await response.json()) as { run?: RunRecord };
+  // A 422 still carries a failed RunRecord; only a missing body is a real error.
+  if (!payload.run) {
+    throw new Error(`Run failed (status ${response.status})`);
+  }
+  return payload.run;
+}
+
+export interface RunStepEvent {
+  type: string;
+  step?: RunRecord['steps'][number];
+}
+
+export interface RunCompleteEvent {
+  run: RunRecord;
+}
+
+export interface RunEventHandlers {
+  onStep?: (event: RunStepEvent) => void;
+  onComplete?: (event: RunCompleteEvent) => void;
+  onError?: () => void;
+}
+
+type EventSourceFactory = (url: string) => EventSource;
+
+/**
+ * Subscribes to the backend SSE stream for live run-step updates. Returns an
+ * unsubscribe function. The EventSource factory is injectable for testing and
+ * environments (jsdom) without a global EventSource.
+ */
+export function subscribeRunEvents(
+  handlers: RunEventHandlers,
+  factory: EventSourceFactory = (url) => new EventSource(url)
+): () => void {
+  const source = factory('/events');
+
+  source.addEventListener('run-step', (event) => {
+    handlers.onStep?.(parseEventData<RunStepEvent>((event as MessageEvent).data));
+  });
+  source.addEventListener('run-complete', (event) => {
+    handlers.onComplete?.(parseEventData<RunCompleteEvent>((event as MessageEvent).data));
+  });
+  source.addEventListener('error', () => {
+    handlers.onError?.();
+  });
+
+  return () => source.close();
+}
+
+function parseEventData<T>(data: string): T {
+  return JSON.parse(data) as T;
+}

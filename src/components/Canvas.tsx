@@ -6,27 +6,28 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  useEdgesState,
-  useNodesState,
   useReactFlow,
   type Connection,
   type Edge,
   type IsValidConnection,
-  type NodeChange
+  type NodeChange,
+  type OnNodesChange,
+  type OnEdgesChange
 } from '@xyflow/react';
 import { BlockNode } from './BlockNode';
-import {
-  createStarterEdges,
-  createStarterNodes,
-  type WorkbenchNode,
-  type WorkbenchNodeData
-} from '../hooks/useFlowState';
+import type { WorkbenchNode, WorkbenchNodeData } from '../flowTypes';
 import { canConnect } from '../shared/graph';
 import { getBlockSpec, getDefaultSettings } from '../shared/commandBuilders';
 
 const nodeTypes = { workbenchBlock: BlockNode };
 
 interface CanvasProps {
+  nodes: WorkbenchNode[];
+  edges: Edge[];
+  setNodes: React.Dispatch<React.SetStateAction<WorkbenchNode[]>>;
+  setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
+  onNodesChange: OnNodesChange<WorkbenchNode>;
+  onEdgesChange: OnEdgesChange;
   selectedNodeId: string;
   onSelectNode: (nodeId: string) => void;
   setValidationMessage: (message: string) => void;
@@ -40,11 +41,18 @@ export function Canvas(props: CanvasProps) {
   );
 }
 
-function CanvasInner({ onSelectNode, setValidationMessage }: CanvasProps) {
+function CanvasInner({
+  nodes,
+  edges,
+  setNodes,
+  setEdges,
+  onNodesChange: onNodesChangeBase,
+  onEdgesChange,
+  onSelectNode,
+  setValidationMessage
+}: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
-  const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkbenchNode>(createStarterNodes());
-  const [edges, setEdges, onEdgesChange] = useEdgesState(createStarterEdges());
   const [history, setHistory] = useState<Array<{ nodes: WorkbenchNode[]; edges: Edge[] }>>([]);
   const [future, setFuture] = useState<Array<{ nodes: WorkbenchNode[]; edges: Edge[] }>>([]);
 

@@ -10,10 +10,16 @@ export function App() {
 
   return (
     <main className="workbench-shell">
-      <TopBar lastSavedAt={workbench.lastSavedAt} onRun={workbench.runNow} />
+      <TopBar lastSavedAt={workbench.lastSavedAt} onRun={workbench.runNow} isRunning={workbench.isRunning} />
       <div className="workbench-grid">
         <BlockPalette />
         <Canvas
+          nodes={workbench.nodes}
+          edges={workbench.edges}
+          setNodes={workbench.setNodes}
+          setEdges={workbench.setEdges}
+          onNodesChange={workbench.onNodesChange}
+          onEdgesChange={workbench.onEdgesChange}
           selectedNodeId={workbench.selectedNodeId}
           onSelectNode={workbench.setSelectedNodeId}
           setValidationMessage={workbench.setValidationMessage}

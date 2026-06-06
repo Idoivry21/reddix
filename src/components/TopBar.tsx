@@ -3,9 +3,10 @@ import { CalendarDays, Download, Play, Save, ShieldCheck } from 'lucide-react';
 interface TopBarProps {
   lastSavedAt: string;
   onRun: () => void;
+  isRunning?: boolean;
 }
 
-export function TopBar({ lastSavedAt, onRun }: TopBarProps) {
+export function TopBar({ lastSavedAt, onRun, isRunning = false }: TopBarProps) {
   return (
     <header className="top-bar">
       <div className="brand-cluster">
@@ -23,8 +24,8 @@ export function TopBar({ lastSavedAt, onRun }: TopBarProps) {
       <div className="top-actions">
         <span className="provider-pill reddit-dot">rdt <strong>Healthy</strong></span>
         <span className="provider-pill twitter-dot">twitter <strong>Healthy</strong></span>
-        <button className="primary-button" onClick={onRun}>
-          <Play size={15} fill="currentColor" /> Run Now
+        <button className="primary-button" onClick={onRun} disabled={isRunning}>
+          <Play size={15} fill="currentColor" /> {isRunning ? 'Running…' : 'Run Now'}
         </button>
         <button className="secondary-button">
           <CalendarDays size={15} /> Schedule

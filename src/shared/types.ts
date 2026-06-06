@@ -1,3 +1,5 @@
+import type { FlowEdgeModel, FlowNodeModel } from './graph';
+
 export type ProviderId = 'reddit' | 'twitter' | 'local';
 
 export type BlockCategory = 'Sources' | 'Enrichment' | 'Transform' | 'Output' | 'Utility';
@@ -84,5 +86,60 @@ export interface SocialItem {
   media: Array<{ type: string; url: string }>;
   links: string[];
   raw: Record<string, unknown>;
+}
+
+export interface FlowDefinition {
+  id: string;
+  name: string;
+  failFast?: boolean;
+  nodes: FlowNodeModel[];
+  edges: FlowEdgeModel[];
+}
+
+export interface FlowSchedule {
+  enabled: boolean;
+  intervalMs?: number;
+  paused?: boolean;
+  nextRunAt?: string | null;
+}
+
+export interface PersistedFlow extends FlowDefinition {
+  schemaVersion: 1;
+  nodePositions: Record<string, { x: number; y: number }>;
+  blockSettings: Record<string, Record<string, unknown>>;
+  schedule: FlowSchedule;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type StepStatus = 'success' | 'failed' | 'skipped';
+
+export interface RunStep {
+  blockId: string;
+  status: StepStatus;
+  argv?: string[];
+  exitCode?: number | null;
+  stdoutSummary?: string;
+  stderr?: string;
+  startedAt: string;
+  endedAt: string;
+  error?: string | null;
+}
+
+export interface OutputFile {
+  path: string;
+  bytes: number;
+}
+
+export interface RunRecord {
+  schemaVersion: 1;
+  id: string;
+  flowId: string;
+  status: 'success' | 'failed' | 'skipped' | 'running';
+  startedAt: string;
+  endedAt: string | null;
+  steps: RunStep[];
+  outputFiles: OutputFile[];
+  error: string | null;
 }
 

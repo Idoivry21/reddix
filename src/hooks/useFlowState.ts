@@ -1,17 +1,14 @@
-import { useCallback, useMemo, useState } from 'react';
-import type { Edge, Node } from '@xyflow/react';
-import { MarkerType } from '@xyflow/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Edge } from '@xyflow/react';
+import { MarkerType, useEdgesState, useNodesState } from '@xyflow/react';
 import { buildBlockCommand, getDefaultSettings, previewCommand } from '../shared/commandBuilders';
-import type { ConsoleState } from '../api';
+import { validateFlow } from '../shared/graph';
+import { postRun, saveFlow, subscribeRunEvents, type ConsoleState } from '../api';
+import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type WorkbenchNode } from '../flowTypes';
+import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
+import { runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
 
-export interface WorkbenchNodeData extends Record<string, unknown> {
-  blockType: string;
-  label: string;
-  settings: Record<string, unknown>;
-  status: 'idle' | 'success' | 'warning';
-}
-
-export type WorkbenchNode = Node<WorkbenchNodeData, 'workbenchBlock'>;
+export type { WorkbenchNode, WorkbenchNodeData } from '../flowTypes';
 
 const edgeDefaults = {
   type: 'smoothstep',
@@ -53,65 +50,121 @@ export function createStarterEdges(): Edge[] {
   ];
 }
 
+function emptyConsoleState(): ConsoleState {
+  return {
+    activeTab: 'Command Trace',
+    command: undefined,
+    runLabel: 'No runs yet',
+    steps: [],
+    logs: ['Ready. Press Run Now to execute the flow.'],
+    results: []
+  };
+}
+
 export function useWorkbenchState() {
+  const [nodes, setNodes, onNodesChange] = useNodesState<WorkbenchNode>(createStarterNodes());
+  const [edges, setEdges, onEdgesChange] = useEdgesState(createStarterEdges());
   const [selectedNodeId, setSelectedNodeId] = useState('search');
   const [lastSavedAt, setLastSavedAt] = useState('All changes saved');
   const [validationMessage, setValidationMessage] = useState('Ready to run');
-  const [consoleState, setConsoleState] = useState<ConsoleState>(() => ({
-    activeTab: 'Command Trace',
-    command: buildBlockCommand({
-      blockId: 'search',
-      blockType: 'reddit.searchPosts',
-      settings: getDefaultSettings('reddit.searchPosts')
-    }),
-    runLabel: 'Run 2026-06-06 15:00',
-    steps: [
-      { id: 'search', label: 'Search Reddit', sublabel: 'rdt search', status: 'success', duration: '1.23s' },
-      { id: 'filter', label: 'Filter Text', sublabel: 'local filter', status: 'success', duration: '0.48s' },
-      { id: 'export-json', label: 'Export JSON', sublabel: 'write file', status: 'success', duration: '0.31s' },
-      { id: 'twitter-search', label: 'Search Tweets', sublabel: 'twitter search', status: 'success', duration: '1.56s' },
-      { id: 'engagement', label: 'Engagement Filter', sublabel: 'local filter', status: 'success', duration: '0.39s' },
-      { id: 'export-csv', label: 'Export CSV', sublabel: 'write file', status: 'success', duration: '0.42s' }
-    ],
-    logs: [
-      'Validated graph: 6 nodes, 4 edges',
-      'Generated argv arrays for reddit and twitter providers',
-      'Retrieved 87 Reddit results and 61 X/Twitter results',
-      'Wrote outputs/reddit-20260606-150000.json and outputs/tweets-20260606-150000.csv'
-    ],
-    results: [
-      {
-        kind: 'post',
-        title: 'Best open source CLI tools for automating local research',
-        author: 'devops_dave',
-        score: 42,
-        created: '2026-06-01'
-      },
-      {
-        kind: 'tweet',
-        title: 'Local CLI automation is easier to audit than hosted scraping',
-        author: 'public_cli',
-        score: 31,
-        created: '2026-06-01'
-      }
-    ]
-  }));
+  const [isRunning, setIsRunning] = useState(false);
+  const [consoleState, setConsoleState] = useState<ConsoleState>(emptyConsoleState);
+
+  // Keep the latest nodes available to async run + SSE handlers without stale closures.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+
+  const selectedCommand = useMemo(() => {
+    const selected = nodes.find((item) => item.id === selectedNodeId);
+    if (!selected || !selected.data.blockType.match(/^(reddit|twitter)\./)) {
+      return undefined;
+    }
+    return buildBlockCommand({
+      blockId: selected.id,
+      blockType: selected.data.blockType,
+      settings: selected.data.settings
+    });
+  }, [nodes, selectedNodeId]);
+
+  // Reflect the selected CLI block in the Command Trace preview.
+  useEffect(() => {
+    setConsoleState((current) => ({ ...current, command: selectedCommand }));
+  }, [selectedCommand]);
 
   const selectedCommandPreview = useMemo(() => {
-    return consoleState.command ? previewCommand(consoleState.command) : 'Local transform block';
-  }, [consoleState.command]);
+    return selectedCommand ? previewCommand(selectedCommand) : 'Local transform block';
+  }, [selectedCommand]);
 
-  const runNow = useCallback(() => {
-    setConsoleState((current) => ({
-      ...current,
-      activeTab: 'Logs',
-      runLabel: `Run ${new Date().toLocaleString()}`,
-      logs: ['Manual run started', ...current.logs]
-    }));
-    setLastSavedAt('Run completed locally');
+  // Live run-step updates over SSE.
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') {
+      return;
+    }
+    const unsubscribe = subscribeRunEvents({
+      onStep: ({ step }) => {
+        if (!step) {
+          return;
+        }
+        const consoleStep = runStepToConsoleStep(step, nodeTypeMap(nodesRef.current)[step.blockId]);
+        setConsoleState((current) => ({ ...current, steps: upsertStep(current.steps, consoleStep) }));
+      },
+      onComplete: ({ run }) => {
+        const nodeTypeById = nodeTypeMap(nodesRef.current);
+        setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeById));
+      }
+    });
+    return unsubscribe;
   }, []);
 
+  const runNow = useCallback(async () => {
+    const model = toFlowModel(nodes, edges);
+    const validation = validateFlow(model);
+    if (!validation.valid) {
+      const messages = validation.errors.map((error) => error.message);
+      setValidationMessage(messages[0] ?? 'Flow is invalid');
+      setConsoleState((current) => ({
+        ...current,
+        activeTab: 'Logs',
+        logs: ['Run blocked: flow failed validation', ...messages.map((message) => `• ${message}`)]
+      }));
+      return;
+    }
+
+    setIsRunning(true);
+    setValidationMessage('Running flow…');
+    setConsoleState((current) => ({ ...current, activeTab: 'Logs', logs: ['Run started…'] }));
+
+    try {
+      const body = toFlowRequestBody(nodes, edges, {
+        flowId: DEFAULT_FLOW_ID,
+        name: DEFAULT_FLOW_NAME,
+        failFast: false
+      });
+      await saveFlow(DEFAULT_FLOW_ID, body);
+      const run = await postRun(DEFAULT_FLOW_ID);
+      setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeMap(nodes)));
+      setValidationMessage(run.status === 'success' ? 'Run completed' : 'Run finished with errors');
+      setLastSavedAt(run.status === 'success' ? 'Run completed' : 'Run finished with errors');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unexpected run error';
+      setValidationMessage('Run failed');
+      setConsoleState((current) => ({
+        ...current,
+        activeTab: 'Logs',
+        logs: [`Run failed: ${message}`, ...current.logs]
+      }));
+    } finally {
+      setIsRunning(false);
+    }
+  }, [edges, nodes]);
+
   return {
+    nodes,
+    edges,
+    setNodes,
+    setEdges,
+    onNodesChange,
+    onEdgesChange,
     selectedNodeId,
     setSelectedNodeId,
     lastSavedAt,
@@ -120,8 +173,21 @@ export function useWorkbenchState() {
     consoleState,
     setConsoleState,
     selectedCommandPreview,
+    isRunning,
     runNow
   };
+}
+
+function nodeTypeMap(nodes: WorkbenchNode[]): Record<string, string> {
+  return Object.fromEntries(nodes.map((item) => [item.id, item.data.blockType]));
+}
+
+function upsertStep(steps: ConsoleState['steps'], next: ConsoleState['steps'][number]): ConsoleState['steps'] {
+  const index = steps.findIndex((step) => step.id === next.id);
+  if (index === -1) {
+    return [...steps, next];
+  }
+  return steps.map((step, position) => (position === index ? next : step));
 }
 
 function node(
@@ -129,7 +195,7 @@ function node(
   blockType: string,
   label: string,
   position: { x: number; y: number },
-  status: WorkbenchNodeData['status']
+  status: WorkbenchNode['data']['status']
 ): WorkbenchNode {
   return {
     id,
@@ -143,4 +209,3 @@ function node(
     }
   };
 }
-
