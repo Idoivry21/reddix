@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { safeSegmentPath } from './safeId';
 import type { PersistedFlow, Preferences, RunRecord } from './types';
 
 interface StorageOptions {
@@ -20,13 +21,15 @@ export function createStorage(options: StorageOptions) {
 
   return {
     async saveFlow(flow: PersistedFlow): Promise<void> {
+      const filePath = safeSegmentPath(flowsDir, flow.id, '.json');
       await ensureDirs();
-      await writeJson(path.join(flowsDir, `${flow.id}.json`), flow);
+      await writeJson(filePath, flow);
     },
 
     async getFlow(flowId: string): Promise<PersistedFlow | null> {
+      const filePath = safeSegmentPath(flowsDir, flowId, '.json');
       await ensureDirs();
-      return readJson<PersistedFlow | null>(path.join(flowsDir, `${flowId}.json`), null);
+      return readJson<PersistedFlow | null>(filePath, null);
     },
 
     async listFlows(): Promise<PersistedFlow[]> {
@@ -41,16 +44,17 @@ export function createStorage(options: StorageOptions) {
     },
 
     async appendRun(run: RunRecord): Promise<void> {
+      const filePath = safeSegmentPath(runsDir, run.flowId, '.json');
       await ensureDirs();
-      const filePath = path.join(runsDir, `${run.flowId}.json`);
       const runs = await readJson<RunRecord[]>(filePath, []);
       const capped = [...runs, run].slice(-maxRunsPerFlow);
       await writeJson(filePath, capped);
     },
 
     async listRuns(flowId: string): Promise<RunRecord[]> {
+      const filePath = safeSegmentPath(runsDir, flowId, '.json');
       await ensureDirs();
-      return readJson<RunRecord[]>(path.join(runsDir, `${flowId}.json`), []);
+      return readJson<RunRecord[]>(filePath, []);
     },
 
     async getPreferences(): Promise<Preferences> {

@@ -31,6 +31,49 @@ describe('local JSON storage', () => {
     expect((await storage.listRuns('flow-1')).map((record) => record.id)).toEqual(['middle', 'new']);
   });
 
+  it('rejects flow ids that escape the data dir', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const storage = createStorage({ baseDir: dir });
+    const malicious = [
+      '../../etc/passwd',
+      '..',
+      '.',
+      'a/b',
+      'a\\b',
+      'foo/../../bar',
+      '',
+      'x\0y'
+    ];
+
+    for (const id of malicious) {
+      await expect(storage.getFlow(id)).rejects.toThrow(/invalid id/i);
+      await expect(storage.listRuns(id)).rejects.toThrow(/invalid id/i);
+      await expect(
+        storage.saveFlow({
+          schemaVersion: 1,
+          id,
+          name: 'x',
+          nodes: [],
+          edges: [],
+          nodePositions: {},
+          blockSettings: {},
+          schedule: { enabled: false },
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z'
+        })
+      ).rejects.toThrow(/invalid id/i);
+      await expect(storage.appendRun(run('r', id))).rejects.toThrow(/invalid id/i);
+    }
+  });
+
+  it('accepts normal flow ids', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const storage = createStorage({ baseDir: dir });
+    for (const id of ['flow-1', 'Flow_2', 'abc.def', 'a1b2c3']) {
+      await expect(storage.getFlow(id)).resolves.toBeNull();
+    }
+  });
+
   it('migrates schema-less preferences on load', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
     await writeFile(
