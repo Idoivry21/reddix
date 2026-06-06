@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, Maximize2, MinusCircle, Trash2 } from 'lucide-react';
 import type { ConsoleRunStep, ConsoleState } from '../api';
+import { Tabs, tabId, tabPanelId } from './Tabs';
 
 interface ConsolePanelProps {
   state: ConsoleState;
@@ -12,11 +13,13 @@ export function ConsolePanel({ state, onTabChange }: ConsolePanelProps) {
   return (
     <section className="console-panel" aria-label="Run console">
       <div className="console-tabs">
-        {tabs.map((tab) => (
-          <button key={tab} className={state.activeTab === tab ? 'active' : ''} onClick={() => onTabChange(tab)}>
-            {tab}
-          </button>
-        ))}
+        <Tabs
+          tabs={tabs}
+          active={state.activeTab}
+          onChange={(tab) => onTabChange(tab as ConsoleState['activeTab'])}
+          label="Run console views"
+          idPrefix="console"
+        />
         <div className="console-actions">
           <button className="ghost-button" type="button">
             <Trash2 size={14} /> Clear
@@ -43,7 +46,13 @@ export function ConsolePanel({ state, onTabChange }: ConsolePanelProps) {
             </li>
           ))}
         </ol>
-        <div className="console-detail">
+        <div
+          className="console-detail"
+          role="tabpanel"
+          id={tabPanelId('console', state.activeTab)}
+          aria-labelledby={tabId('console', state.activeTab)}
+          tabIndex={0}
+        >
           {state.activeTab === 'Output Preview' ? (
             <ResultTable rows={state.results} />
           ) : state.activeTab === 'Logs' ? (

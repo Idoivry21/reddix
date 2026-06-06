@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import { buildBlockCommand, getBlockSpec, previewCommand } from '../shared/commandBuilders';
 import type { FieldSpec } from '../shared/types';
 import type { WorkbenchNode } from '../flowTypes';
+import { Tabs, tabId, tabPanelId } from './Tabs';
+
+const INSPECTOR_TABS = ['Settings', 'Validation', 'Notes'] as const;
 
 interface InspectorProps {
   node: WorkbenchNode | undefined;
@@ -10,6 +14,7 @@ interface InspectorProps {
 }
 
 export function Inspector({ node, validationMessage, onSettingChange }: InspectorProps) {
+  const [activeTab, setActiveTab] = useState<(typeof INSPECTOR_TABS)[number]>('Settings');
   if (!node) {
     return (
       <aside className="inspector" aria-label="Inspector">
@@ -39,26 +44,40 @@ export function Inspector({ node, validationMessage, onSettingChange }: Inspecto
           <X size={16} />
         </button>
       </div>
-      <nav className="inspector-tabs">
-        <button className="active" type="button">
-          Settings
-        </button>
-        <button type="button">Validation</button>
-        <button type="button">Notes</button>
-      </nav>
-      <div className="field-grid">
-        {spec.fields.map((field) => (
-          <Field
-            key={field.key}
-            field={field}
-            value={settings[field.key]}
-            onChange={(value) => onSettingChange(field.key, value)}
-          />
-        ))}
+      <div className="inspector-tabs">
+        <Tabs
+          tabs={INSPECTOR_TABS}
+          active={activeTab}
+          onChange={(tab) => setActiveTab(tab as (typeof INSPECTOR_TABS)[number])}
+          label="Inspector sections"
+          idPrefix="inspector"
+        />
       </div>
-      <div className="validation-box">
-        <strong>Validation</strong>
-        <span>{validationMessage}</span>
+      <div
+        role="tabpanel"
+        id={tabPanelId('inspector', activeTab)}
+        aria-labelledby={tabId('inspector', activeTab)}
+        tabIndex={0}
+      >
+        {activeTab === 'Settings' ? (
+          <div className="field-grid">
+            {spec.fields.map((field) => (
+              <Field
+                key={field.key}
+                field={field}
+                value={settings[field.key]}
+                onChange={(value) => onSettingChange(field.key, value)}
+              />
+            ))}
+          </div>
+        ) : activeTab === 'Validation' ? (
+          <div className="validation-box">
+            <strong>Validation</strong>
+            <span>{validationMessage}</span>
+          </div>
+        ) : (
+          <p className="inspector-notes">Notes are local to this session and not yet persisted.</p>
+        )}
       </div>
       <section className="command-preview">
         <h3>Command Preview</h3>
