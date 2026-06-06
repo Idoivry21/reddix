@@ -10,6 +10,20 @@ export default defineConfig({
       '/events': 'http://127.0.0.1:8787'
     }
   },
+  build: {
+    sourcemap: true,
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split the heavy canvas library out of the main bundle so it can be
+          // cached independently of app code.
+          xyflow: ['@xyflow/react'],
+          icons: ['lucide-react']
+        }
+      }
+    }
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
