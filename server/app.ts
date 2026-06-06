@@ -4,7 +4,8 @@ import express from 'express';
 import cors from 'cors';
 import { buildCorsOptions } from './cors';
 import { csrfGuard } from './csrfGuard';
-import { errorHandler } from './errorHandler';
+import { createErrorHandler } from './errorHandler';
+import { createLogger } from './logger';
 import { createRoutes } from './routes';
 import type { createStorage } from './storage';
 
@@ -27,11 +28,13 @@ export interface CreatedApp {
  */
 export function createApp(options: CreateAppOptions): CreatedApp {
   const app = express();
+  const logger = createLogger();
   const { router, eventsHandler, closeClients } = createRoutes({
     storage: options.storage,
     dataDir: options.dataDir
   });
 
+  app.use(logger.requestLogger());
   app.use(cors(buildCorsOptions(process.env)));
   app.use(csrfGuard);
   app.use(express.json({ limit: '2mb' }));
@@ -52,6 +55,6 @@ export function createApp(options: CreateAppOptions): CreatedApp {
     });
   }
 
-  app.use(errorHandler);
+  app.use(createErrorHandler(logger));
   return { app, closeClients };
 }
