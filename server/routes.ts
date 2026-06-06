@@ -9,6 +9,7 @@ import { runFlow } from './runEngine';
 import { createScheduler } from './scheduler';
 import { formatZodError, parseFlowPutBody, parseRunPostBody } from './schemas';
 import { isSafeId, resolveContainedPath } from './safeId';
+import { createSseHub } from './sseHub';
 import type { PersistedFlow, RunRecord } from './types';
 
 interface RoutesOptions {
@@ -16,15 +17,9 @@ interface RoutesOptions {
   dataDir: string;
 }
 
-interface SseClient {
-  id: number;
-  response: express.Response;
-}
-
 export function createRoutes(options: RoutesOptions) {
   const router = express.Router();
-  const clients = new Map<number, SseClient>();
-  let clientId = 0;
+  const sse = createSseHub();
 
   const scheduler = createScheduler({
     minIntervalMs: 15 * 60 * 1000,
@@ -125,20 +120,6 @@ export function createRoutes(options: RoutesOptions) {
     response.json({ ok: true });
   });
 
-  const eventsHandler: express.RequestHandler = (request, response) => {
-    response.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive'
-    });
-    response.write('event: ready\ndata: {}\n\n');
-    const id = clientId++;
-    clients.set(id, { id, response });
-    request.on('close', () => {
-      clients.delete(id);
-    });
-  };
-
   async function runAndStore(flowId: string): Promise<RunRecord> {
     const flow = await options.storage.getFlow(flowId);
     if (!flow) {
@@ -151,28 +132,14 @@ export function createRoutes(options: RoutesOptions) {
       executor: cliExecutor,
       secrets: buildSecretMap(process.env),
       writeArtifact: writeArtifact(options.dataDir),
-      emit: (event) => broadcast('run-step', event)
+      emit: (event) => sse.broadcast('run-step', event)
     });
     await options.storage.appendRun(run);
-    broadcast('run-complete', { run });
+    sse.broadcast('run-complete', { run });
     return run;
   }
 
-  function broadcast(event: string, payload: unknown) {
-    const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-    for (const client of clients.values()) {
-      client.response.write(message);
-    }
-  }
-
-  function closeClients() {
-    for (const client of clients.values()) {
-      client.response.end();
-    }
-    clients.clear();
-  }
-
-  return { router, eventsHandler, closeClients };
+  return { router, eventsHandler: sse.handler, closeClients: sse.closeAll };
 }
 
 function writeArtifact(dataDir: string) {
