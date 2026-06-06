@@ -7,4 +7,5 @@ coverage/
 .vite/
 .reddix-data/
 outputs/
+.playwright-mcp/
 .DS_Store
