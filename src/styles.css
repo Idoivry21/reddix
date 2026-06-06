@@ -741,3 +741,56 @@ button {
     border-bottom: 1px solid var(--border);
   }
 }
+
+/* T404: empty states */
+.empty-state {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--muted);
+  pointer-events: none;
+  text-align: center;
+}
+
+.canvas-empty strong {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.inspector-notes {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+/* T305: run status bar states */
+.run-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.run-status-error {
+  color: var(--error);
+  background: rgba(220, 38, 38, 0.08);
+}
+.run-status-warning {
+  color: var(--warning);
+  background: rgba(217, 119, 6, 0.08);
+}
+.run-status-success {
+  color: var(--success);
+}

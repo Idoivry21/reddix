@@ -221,6 +221,12 @@ function CanvasInner({
         <Controls position="bottom-left" />
         <MiniMap zoomable pannable position="bottom-right" nodeStrokeWidth={3} />
       </ReactFlow>
+      {nodes.length === 0 ? (
+        <div className="canvas-empty" role="note">
+          <strong>Empty canvas</strong>
+          <p>Add a block from the palette (drag, click, or Enter) to start building a flow.</p>
+        </div>
+      ) : null}
     </section>
   );
 }

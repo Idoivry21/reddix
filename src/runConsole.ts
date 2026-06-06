@@ -3,6 +3,12 @@ import { getBlockSpec } from './shared/commandBuilders';
 import type { RunRecord, RunStep } from './shared/types';
 
 const MAX_HISTORY_ENTRIES = 50;
+const MAX_LOG_LINES = 200;
+
+/** Keep only the most recent MAX_LOG_LINES entries to bound console memory. */
+export function capLogs(logs: string[], max = MAX_LOG_LINES): string[] {
+  return logs.length > max ? logs.slice(-max) : logs;
+}
 
 /**
  * Maps a backend RunRecord onto the console view model. The record only carries
@@ -20,7 +26,7 @@ export function runRecordToConsoleState(
     command: prev.command,
     runLabel: `Run ${run.startedAt}`,
     steps: run.steps.map((step) => toConsoleStep(step, nodeTypeById[step.blockId])),
-    logs: buildLogs(run),
+    logs: capLogs(buildLogs(run)),
     results: [],
     // Dedupe by run id: SSE onComplete and the REST response both map the same
     // run, so filter any existing entry for this id before prepending.

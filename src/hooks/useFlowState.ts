@@ -7,7 +7,7 @@ import { postRun, saveFlow, subscribeRunEvents, type ConsoleState } from '../api
 import { DEFAULT_FLOW_ID, DEFAULT_FLOW_NAME, type NodeStatus, type RunStatus, type WorkbenchNode } from '../flowTypes';
 import { createBlockNode } from '../flowFactory';
 import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
-import { runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
+import { capLogs, runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
 
 export type { WorkbenchNode, WorkbenchNodeData } from '../flowTypes';
 
@@ -216,7 +216,7 @@ export function useWorkbenchState() {
       setConsoleState((current) => ({
         ...current,
         activeTab: 'Logs',
-        logs: [`Run failed: ${message}`, ...current.logs]
+        logs: capLogs([`Run failed: ${message}`, ...current.logs])
       }));
     } finally {
       setIsRunning(false);
