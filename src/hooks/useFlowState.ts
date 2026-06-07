@@ -25,7 +25,7 @@ import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
 import { capLogs, runRecordToConsoleState, runsToHistoryEntries, runStepToConsoleStep } from '../runConsole';
 import { createSampleEdges, createSampleNodes, SAMPLE_FLOW_NAME } from '../sampleFlow';
 import { cronToIntervalMs } from '../scheduleCadence';
-import { DEFAULT_NODE_SIZE } from '../canvasGeometry';
+import { CANVAS_GEOMETRY, DEFAULT_NODE_SIZE } from '../canvasGeometry';
 import type { SavedSchedule } from '../components/ScheduleModal';
 import type { FlowSummary } from '../components/Dashboard';
 import { accentForBlock, type AccentKey } from '../blockVisuals';
@@ -220,14 +220,17 @@ export function useWorkbenchState() {
       maxY = Math.max(maxY, node.y + size.h);
     }
     const rect = wrap.getBoundingClientRect();
-    const pad = 80;
-    const fit = Math.min((rect.width - pad * 2) / (maxX - minX), (rect.height - pad * 2 - 60) / (maxY - minY));
-    const k = Math.max(0.35, Math.min(1.1, fit));
-    setView({ k, x: (rect.width - (maxX - minX) * k) / 2 - minX * k, y: pad + 10 - minY * k });
+    const { padding, headerReserve, topNudge, minZoom, maxZoom } = CANVAS_GEOMETRY.fit;
+    const fit = Math.min(
+      (rect.width - padding * 2) / (maxX - minX),
+      (rect.height - padding * 2 - headerReserve) / (maxY - minY)
+    );
+    const k = Math.max(minZoom, Math.min(maxZoom, fit));
+    setView({ k, x: (rect.width - (maxX - minX) * k) / 2 - minX * k, y: padding + topNudge - minY * k });
   }, [nodes, sizes]);
 
   useEffect(() => {
-    const id = window.setTimeout(fitView, 80);
+    const id = window.setTimeout(fitView, CANVAS_GEOMETRY.fitDelayMs.mount);
     return () => window.clearTimeout(id);
     // Run once on mount to frame the sample flow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,7 +460,7 @@ export function useWorkbenchState() {
         setConsoleState(emptyConsoleState());
         setShowDashboard(false);
         loadHistory(flow.id);
-        window.setTimeout(fitView, 60);
+        window.setTimeout(fitView, CANVAS_GEOMETRY.fitDelayMs.openFlow);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unexpected error';
         setRunStatus({ kind: 'error', message: `Failed to open flow: ${message}` });

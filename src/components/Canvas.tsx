@@ -3,7 +3,7 @@ import { NodeCard } from './NodeCard';
 import { getBlockSpec } from '../shared/commandBuilders';
 import { canConnect } from '../shared/graph';
 import { accentForBlock } from '../blockVisuals';
-import { edgePath, nodePorts, type PortPoint } from '../canvasGeometry';
+import { CANVAS_GEOMETRY, edgePath, nodePorts, type PortPoint } from '../canvasGeometry';
 import type { CanvasView, NodeSize, WorkbenchEdge, WorkbenchNode } from '../flowTypes';
 
 const BLOCK_DRAG_MIME = 'application/reddix-block';
@@ -223,7 +223,10 @@ export function Canvas(props: CanvasProps) {
         const mx = event.clientX - rect.left;
         const my = event.clientY - rect.top;
         setView((current) => {
-          const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.k * (event.deltaY < 0 ? 1.08 : 0.926)));
+          const k = Math.min(
+            MAX_ZOOM,
+            Math.max(MIN_ZOOM, current.k * (event.deltaY < 0 ? CANVAS_GEOMETRY.wheelZoom.in : CANVAS_GEOMETRY.wheelZoom.out))
+          );
           const ratio = k / current.k;
           return { k, x: mx - (mx - current.x) * ratio, y: my - (my - current.y) * ratio };
         });
@@ -247,7 +250,11 @@ export function Canvas(props: CanvasProps) {
         return;
       }
       const point = toCanvas(event.clientX, event.clientY);
-      onDropBlock(blockType, Math.round(point.x - 110), Math.round(point.y - 40));
+      onDropBlock(
+        blockType,
+        Math.round(point.x - CANVAS_GEOMETRY.dropOffset.x),
+        Math.round(point.y - CANVAS_GEOMETRY.dropOffset.y)
+      );
     },
     [dragType, onDropBlock, readOnly, toCanvas]
   );
@@ -478,13 +485,13 @@ export function Canvas(props: CanvasProps) {
       <div className="canvas-hint">Drag blocks in · drag a port to wire · scroll to pan · ⌘scroll to zoom</div>
 
       <div className="canvas-toolbar">
-        <button className="tool-btn" title="Zoom out" onClick={() => zoomToCenter(0.88)}>
+        <button className="tool-btn" title="Zoom out" onClick={() => zoomToCenter(CANVAS_GEOMETRY.toolbarZoom.out)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M5 12h14" />
           </svg>
         </button>
         <span className="zoom-val">{Math.round(view.k * 100)}%</span>
-        <button className="tool-btn" title="Zoom in" onClick={() => zoomToCenter(1.14)}>
+        <button className="tool-btn" title="Zoom in" onClick={() => zoomToCenter(CANVAS_GEOMETRY.toolbarZoom.in)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>

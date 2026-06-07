@@ -1,8 +1,21 @@
 {
-  "name": "reddix-social-cli-workbench",
+  "name": "reddix",
   "version": "0.1.0",
-  "private": true,
+  "description": "Local single-user canvas automation workbench for read-only social CLI research and exports.",
+  "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "keywords": [
+    "automation",
+    "canvas",
+    "reddit",
+    "twitter",
+    "x",
+    "cli",
+    "research"
+  ],
   "scripts": {
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
@@ -32,11 +45,11 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.2",
     "jsdom": "^25.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vite": "^5.4.21",
-    "vitest": "^2.1.8"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
   }
 }

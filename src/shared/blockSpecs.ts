@@ -262,10 +262,22 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
     fields: [
       { key: 'minScore', label: 'Min Score', type: 'number', min: 0 },
+      { key: 'minComments', label: 'Min Comments', type: 'number', min: 0 },
+      { key: 'minReplies', label: 'Min Replies', type: 'number', min: 0 },
       { key: 'minLikes', label: 'Min Likes', type: 'number', min: 0 },
-      { key: 'minReplies', label: 'Min Replies', type: 'number', min: 0 }
+      { key: 'minRetweets', label: 'Min Retweets', type: 'number', min: 0 },
+      { key: 'minBookmarks', label: 'Min Bookmarks', type: 'number', min: 0 },
+      { key: 'minViews', label: 'Min Views', type: 'number', min: 0 }
     ],
-    defaultSettings: { minScore: 0, minLikes: 10, minReplies: 0 }
+    defaultSettings: {
+      minScore: 0,
+      minComments: 0,
+      minReplies: 0,
+      minLikes: 10,
+      minRetweets: 0,
+      minBookmarks: 0,
+      minViews: 0
+    }
   },
   {
     type: 'transform.sortLocal',
@@ -275,7 +287,23 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Sort normalized social items.',
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
-    fields: [{ key: 'field', label: 'Field', type: 'select', options: options(['createdAt', 'score', 'comments', 'likes', 'retweets', 'views']) }],
+    fields: [
+      {
+        key: 'field',
+        label: 'Field',
+        type: 'select',
+        options: options([
+          'createdAt',
+          'score',
+          'comments',
+          'replies',
+          'likes',
+          'retweets',
+          'bookmarks',
+          'views'
+        ])
+      }
+    ],
     defaultSettings: { field: 'createdAt' }
   },
   {

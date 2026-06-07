@@ -156,6 +156,32 @@ describe('provider command builders', () => {
     ]);
   });
 
+  it('exposes a UI field for every engagement threshold the filter reads', () => {
+    // Guards against the filter reading a threshold the Inspector cannot configure.
+    const spec = getBlockSpec('transform.engagementFilter');
+    const fieldKeys = spec.fields.map((field) => field.key).sort();
+    expect(fieldKeys).toEqual(
+      ['minBookmarks', 'minComments', 'minLikes', 'minReplies', 'minRetweets', 'minScore', 'minViews'].sort()
+    );
+  });
+
+  it('exposes every sortable engagement field for local sorting', () => {
+    const spec = getBlockSpec('transform.sortLocal');
+    const field = spec.fields.find((candidate) => candidate.key === 'field');
+    const optionValues = field?.options?.map((option) => option.value).sort();
+
+    expect(optionValues).toEqual([
+      'bookmarks',
+      'comments',
+      'createdAt',
+      'likes',
+      'replies',
+      'retweets',
+      'score',
+      'views'
+    ]);
+  });
+
   it('defines explicit options for every select field', () => {
     for (const spec of listBlockSpecs()) {
       for (const field of spec.fields.filter((candidate) => candidate.type === 'select')) {

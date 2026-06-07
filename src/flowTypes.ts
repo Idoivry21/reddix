@@ -47,4 +47,3 @@ export interface NodeSize {
 }
 
 export const DEFAULT_FLOW_ID = 'primary-flow';
-export const DEFAULT_FLOW_NAME = 'Starter research export';

@@ -1,3 +1,4 @@
+import { PROVIDER_META } from './providers';
 import type { SocialItem } from './types';
 
 export interface HtmlReportMeta {
@@ -44,7 +45,10 @@ export function safeHref(url: unknown): string | null {
 }
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|bmp|svg)(\?|#|$)/i;
-const PLATFORM_LABEL: Record<SocialItem['platform'], string> = { reddit: 'reddit', twitter: 'x' };
+const PLATFORM_LABEL: Record<SocialItem['platform'], string> = {
+  reddit: PROVIDER_META.reddit.badge,
+  twitter: PROVIDER_META.twitter.badge
+};
 
 /**
  * Serialize normalized items into ONE self-contained HTML document: inline

@@ -1,4 +1,5 @@
 import { blockSpecs, blockSpecByType } from './blockSpecs';
+import { CLI_PROVIDERS } from './providers';
 import type { BlockSpec, BuiltCommand, CommandBuildInput, FieldSpec } from './types';
 
 export function listBlockSpecs(): BlockSpec[] {
@@ -86,14 +87,11 @@ export function previewCommand(command: BuiltCommand): string {
 }
 
 export function getProviderHealthCommands() {
-  return [
-    { provider: 'reddit' as const, executable: 'rdt' as const, argv: ['status', '--json'] },
-    {
-      provider: 'twitter' as const,
-      executable: 'twitter' as const,
-      argv: ['status', '--json']
-    }
-  ];
+  return CLI_PROVIDERS.map((meta) => ({
+    provider: meta.id,
+    executable: meta.executable,
+    argv: ['status', '--json']
+  }));
 }
 
 function buildRedditSearch(settings: Record<string, unknown>): BuiltCommand {

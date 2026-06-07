@@ -1,6 +1,9 @@
 node_modules
 dist
 .reddix-data
+.env
+.env.*
+!.env.example
 .git
 .github
 tests
@@ -11,5 +14,6 @@ test-results
 .claude
 .codegraph
 .harness
+.superpowers
 out
 coverage

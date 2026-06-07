@@ -44,6 +44,43 @@ export function applyEngagementFilter(
   });
 }
 
+/**
+ * Sort items by the chosen field, descending (newest / highest first). Returns a
+ * new array — the input is never mutated. Missing/non-numeric values sort last.
+ */
+export function applySort(items: SocialItem[], settings: Record<string, unknown>): SocialItem[] {
+  const field = stringSetting(settings.field) || 'createdAt';
+  return [...items].sort((a, b) => sortValue(b, field) - sortValue(a, field));
+}
+
+function sortValue(item: SocialItem, field: string): number {
+  if (field === 'createdAt') {
+    const time = Date.parse(item.createdAt);
+    return Number.isNaN(time) ? 0 : time;
+  }
+  const value = item.engagement[field as keyof SocialItem['engagement']];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Concatenate upstream streams and drop duplicate items (same platform + id),
+ * keeping the first occurrence. The engine already flattens incoming edges into
+ * one array, so this is the dedupe step that makes merging more than a no-op.
+ */
+export function applyMerge(items: SocialItem[]): SocialItem[] {
+  const seen = new Set<string>();
+  const merged: SocialItem[] = [];
+  for (const item of items) {
+    const key = `${item.platform}:${item.id}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
+}
+
 function numberSetting(value: unknown, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;

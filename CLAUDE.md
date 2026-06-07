@@ -45,7 +45,7 @@ Both halves must run for a full local session: start the backend (`dev:server`) 
 Single npm package, two halves plus a shared core. The TypeScript build is split into two project references ([tsconfig.app.json](tsconfig.app.json) = `src`, [tsconfig.node.json](tsconfig.node.json) = `server` + `src/shared` + config).
 
 ```
-src/            React + Vite frontend (canvas UI, @xyflow/react)
+src/            React + Vite frontend (bespoke canvas UI, no canvas library)
 server/         Express backend that spawns the CLIs (tsx, no build step to run)
 src/shared/     ISOMORPHIC core imported by BOTH frontend and backend
 ```
@@ -89,9 +89,9 @@ Block types are namespaced strings: `reddit.*`, `twitter.*` (CLI-backed), `trans
 
 ### Frontend (src/)
 
-[App.tsx](src/App.tsx) renders the four-panel workbench: `TopBar`, `BlockPalette`, `Canvas` (@xyflow/react), `Inspector`, `ConsolePanel`. State is driven by [useFlowState.ts](src/hooks/useFlowState.ts).
+[App.tsx](src/App.tsx) renders the workbench: `TopBar`, `BlockPalette`, `Canvas` (a bespoke `@xyflow`-free canvas in [Canvas.tsx](src/components/Canvas.tsx)), `Inspector`, `ConsolePanel`. State is driven by the `useWorkbenchState` hook in [useFlowState.ts](src/hooks/useFlowState.ts).
 
-> **Current state of wiring:** the frontend is largely a UI shell with **mock/static console data** in `useFlowState.ts`. Only `fetchHealth` ([api.ts](src/api.ts)) actually hits the backend; `runNow` mutates local logs and does **not** yet POST `/api/runs`. The backend run engine, storage, scheduler, and the shared core are real and tested. When wiring the UI to the backend, drive it through the existing `/api` routes and the shared `commandBuilders`/`graph` modules — do not duplicate that logic in the frontend.
+> **Wiring:** the frontend is wired to the backend through [api.ts](src/api.ts). `runNow` validates the flow locally (`validateFlow`), persists it via `PUT /api/flows/:id`, `POST`s `/api/runs`, then hydrates console + node statuses from the returned `RunRecord`; live run steps stream over SSE (`/events`). Drive any new behavior through the existing `/api` routes and the shared `commandBuilders`/`graph` modules — do not duplicate that logic in the frontend.
 
 ## Security invariants (non-negotiable — enforced by tests)
 

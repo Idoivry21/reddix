@@ -7,7 +7,7 @@ import { validateFlow } from '../src/shared/graph';
 import { normalizeRedditPayload, normalizeTwitterPayload } from '../src/shared/normalizers';
 import { redactSecrets } from '../src/shared/redaction';
 import type { SecretMap } from '../src/shared/redaction';
-import { applyEngagementFilter, applyFilterText, applyLimit } from '../src/shared/transforms';
+import { applyEngagementFilter, applyFilterText, applyLimit, applyMerge, applySort } from '../src/shared/transforms';
 import type { RunSampleRow, SocialItem } from '../src/shared/types';
 import type { CliExecutor, FlowDefinition, RunRecord, RunStep } from './types';
 
@@ -141,6 +141,10 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
         data.set(node.id, applyFilterText(inputItems, node.settings));
       } else if (node.type === 'transform.engagementFilter') {
         data.set(node.id, applyEngagementFilter(inputItems, node.settings));
+      } else if (node.type === 'transform.sortLocal') {
+        data.set(node.id, applySort(inputItems, node.settings));
+      } else if (node.type === 'transform.mergeStreams') {
+        data.set(node.id, applyMerge(inputItems));
       } else if (node.type.startsWith('output.')) {
         const artifact = await writeOutput(node, inputItems, options.writeArtifact, now(), options.flow.name);
         outputFiles.push(artifact);

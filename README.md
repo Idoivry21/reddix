@@ -13,6 +13,11 @@ reports missing binaries.
 See the full product spec in
 [docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md).
 
+## Project status
+
+Reddix is pre-1.0. Expect APIs, flow JSON, and UI details to change while the
+core local-first safety model stabilizes.
+
 ## Requirements
 
 - Node.js 20+
@@ -30,6 +35,9 @@ npm run dev          # Vite frontend on http://127.0.0.1:5173 (proxies /api and 
 ```
 
 Open http://127.0.0.1:5173.
+
+For local configuration, copy `.env.example` to `.env` and change only the
+values you need. Never commit real `TWITTER_AUTH_TOKEN` or `TWITTER_CT0` values.
 
 ## Production (single process)
 
@@ -90,3 +98,18 @@ npm run test:e2e     # playwright (desktop authoring + mobile read-only)
 
 Flow ids and export paths are validated to stay inside the data directory
 (path-traversal blocked), and API request bodies are validated with `zod`.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: preserve the security
+invariants above, add tests around command/storage/run-record changes, and run
+the CI-equivalent checks before opening a pull request.
+
+## Security
+
+Please do not report vulnerabilities with exploit details in public issues. See
+[SECURITY.md](SECURITY.md) for the supported branch and reporting process.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

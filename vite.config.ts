@@ -1,24 +1,31 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
+const backendOrigin = process.env.REDDIX_BACKEND_ORIGIN ?? 'http://127.0.0.1:8787';
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://127.0.0.1:8787',
-      '/events': 'http://127.0.0.1:8787'
+      '/api': backendOrigin,
+      '/events': backendOrigin
     }
   },
   build: {
     sourcemap: true,
     chunkSizeWarningLimit: 800,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          // Split the icon library out of the main bundle so it can be cached
-          // independently of app code. The canvas is now bespoke (no @xyflow).
-          icons: ['lucide-react']
+        codeSplitting: {
+          groups: [
+            {
+              // Split the icon library out of the main bundle so it can be
+              // cached independently of app code.
+              name: 'icons',
+              test: 'node_modules/lucide-react'
+            }
+          ]
         }
       }
     }

@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { SocialItem } from './types';
 
 const csvColumns = [
@@ -67,13 +66,21 @@ export function serializeMarkdown(items: SocialItem[]): string {
 }
 
 export function buildTimestampedExportPath(filePath: string, date: Date): string {
-  const parsed = path.parse(filePath);
   const timestamp = date
     .toISOString()
     .replace(/[-:]/g, '')
     .replace(/\.\d{3}Z$/, '')
     .replace('T', '-');
-  return path.join(parsed.dir, `${parsed.name}-${timestamp}${parsed.ext}`);
+  // Parse the POSIX-style export path with string ops only, so this module stays
+  // browser-safe (no node:path) and honors the isomorphic src/shared contract.
+  const slash = filePath.lastIndexOf('/');
+  const dir = slash >= 0 ? filePath.slice(0, slash + 1) : '';
+  const base = filePath.slice(slash + 1);
+  const dot = base.lastIndexOf('.');
+  // dot > 0 so a leading-dot dotfile (".env") is treated as having no extension.
+  const name = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : '';
+  return `${dir}${name}-${timestamp}${ext}`;
 }
 
 function csvCell(value: unknown): string {

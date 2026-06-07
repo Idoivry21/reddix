@@ -3,6 +3,24 @@ import type { BlockSpec, PortSpec } from './shared/types';
 
 export const DEFAULT_NODE_SIZE: NodeSize = { w: 232, h: 120 };
 
+/**
+ * Canvas zoom, drop-placement, and fit-framing tuning. Centralized so behavior
+ * can be adjusted in one place instead of via inline literals scattered across
+ * the canvas component and the workbench hook.
+ */
+export const CANVAS_GEOMETRY = {
+  /** Zoom multiplier per ⌘/Ctrl-scroll wheel tick (in = zoom toward cursor). */
+  wheelZoom: { in: 1.08, out: 0.926 },
+  /** Zoom multiplier applied by the toolbar +/- buttons. */
+  toolbarZoom: { in: 1.14, out: 0.88 },
+  /** Offset subtracted from the drop point so a dropped block lands under the cursor. */
+  dropOffset: { x: 110, y: 40 },
+  /** Fit-to-view framing: outer padding, reserved header band, top nudge, zoom clamps. */
+  fit: { padding: 80, headerReserve: 60, topNudge: 10, minZoom: 0.35, maxZoom: 1.1 },
+  /** Delay (ms) before re-framing after mount / after opening another flow. */
+  fitDelayMs: { mount: 80, openFlow: 60 }
+} as const;
+
 /** Even vertical spacing for the i-th of n ports along a node edge. */
 export function portFrac(index: number, count: number): number {
   return (index + 1) / (count + 1);

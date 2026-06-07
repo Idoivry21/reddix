@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEngagementFilter, applyFilterText, applyLimit } from '../src/shared/transforms';
+import { applyEngagementFilter, applyFilterText, applyLimit, applyMerge, applySort } from '../src/shared/transforms';
 import type { SocialItem } from '../src/shared/types';
 
 const items: SocialItem[] = [
@@ -50,6 +50,28 @@ describe('transforms', () => {
 
   it('filters by engagement fields present on each platform', () => {
     expect(applyEngagementFilter(items, { minScore: 5, minLikes: 5 })).toEqual([items[0]]);
+  });
+
+  it('filters on the less-common engagement thresholds', () => {
+    // minComments only excludes the reddit item (2 comments); the twitter item has
+    // no comments field so it passes (absent fields never fail a threshold).
+    expect(applyEngagementFilter(items, { minComments: 5 })).toEqual([items[1]]);
+  });
+
+  it('sorts by createdAt descending (newest first) without mutating input', () => {
+    const sorted = applySort(items, { field: 'createdAt' });
+    expect(sorted).toEqual([items[1], items[0]]);
+    // input order is preserved (immutable)
+    expect(items[0].id).toBe('1');
+  });
+
+  it('sorts by an engagement field descending, treating missing values as lowest', () => {
+    expect(applySort(items, { field: 'score' })).toEqual([items[0], items[1]]);
+  });
+
+  it('merges streams by dropping duplicate platform+id items, keeping the first', () => {
+    const dup = { ...items[0], author: 'second-copy' };
+    expect(applyMerge([items[0], items[1], dup])).toEqual([items[0], items[1]]);
   });
 });
 

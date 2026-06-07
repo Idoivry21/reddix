@@ -8,6 +8,7 @@ import { getProviderHealthCommands } from '../src/shared/commandBuilders';
 import { validateFlow } from '../src/shared/graph';
 import { buildSecretMap } from '../src/shared/redaction';
 import { MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
+import { CLI_PROVIDERS } from '../src/shared/providers';
 import { checkExecutable, cliExecutor } from './executor';
 import { runFlow } from './runEngine';
 import { createRateLimiter } from './rateLimiter';
@@ -270,10 +271,10 @@ export function createRoutes(options: RoutesOptions) {
 function flowProviders(flow: PersistedFlow): string[] {
   const providers = new Set<string>();
   for (const node of flow.nodes) {
-    if (node.type.startsWith('reddit.')) {
-      providers.add('reddit');
-    } else if (node.type.startsWith('twitter.')) {
-      providers.add('twitter');
+    for (const meta of CLI_PROVIDERS) {
+      if (node.type.startsWith(meta.nodePrefix)) {
+        providers.add(meta.id);
+      }
     }
   }
   return [...providers];
