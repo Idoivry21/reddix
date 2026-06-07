@@ -1,7 +1,19 @@
 import type { SocialItem } from './types';
 
-export function normalizeRedditPayload(payload: unknown, sourceBlockId: string): SocialItem[] {
-  return extractArray(payload).map((raw) => {
+/**
+ * Called when a CLI payload has content but no recognizable item array could be
+ * extracted (e.g. the CLI changed its JSON envelope). Lets the run engine warn
+ * so "0 results" caused by a shape change is distinguishable from a genuinely
+ * empty result. Isomorphic: the shared core takes a callback, not a logger.
+ */
+export type UnrecognizedPayloadHandler = (info: { keys: string[] }) => void;
+
+export function normalizeRedditPayload(
+  payload: unknown,
+  sourceBlockId: string,
+  onUnrecognized?: UnrecognizedPayloadHandler
+): SocialItem[] {
+  return extractArray(payload, onUnrecognized).map((raw) => {
     const title = stringValue(raw.title);
     const body = stringValue(raw.selftext ?? raw.body);
     return {
@@ -26,8 +38,12 @@ export function normalizeRedditPayload(payload: unknown, sourceBlockId: string):
   });
 }
 
-export function normalizeTwitterPayload(payload: unknown, sourceBlockId: string): SocialItem[] {
-  return extractArray(payload).map((raw) => {
+export function normalizeTwitterPayload(
+  payload: unknown,
+  sourceBlockId: string,
+  onUnrecognized?: UnrecognizedPayloadHandler
+): SocialItem[] {
+  return extractArray(payload, onUnrecognized).map((raw) => {
     const body = stringValue(raw.text ?? raw.full_text ?? raw.body);
     // twitter-cli nests counts under `metrics` and the author under `author.screenName`.
     // Keep flat fallbacks so older/alternate payload shapes still normalize.
@@ -68,7 +84,7 @@ function tweetUrl(handle: string | null, id: string): string | null {
 
 type RawRecord = Record<string, any>;
 
-function extractArray(payload: unknown): RawRecord[] {
+function extractArray(payload: unknown, onUnrecognized?: UnrecognizedPayloadHandler): RawRecord[] {
   const value = payload as RawRecord;
   const data = value?.data ?? value?.items ?? value?.results ?? value;
   // CLIs wrap results as `{ ok, data: [...] }`; some commands nest one level
@@ -80,7 +96,16 @@ function extractArray(payload: unknown): RawRecord[] {
   if (Array.isArray(candidate)) {
     return candidate.filter(isRecord);
   }
-  return isRecord(candidate) ? [candidate] : [];
+  if (isRecord(candidate)) {
+    return [candidate];
+  }
+  // No array and no single record could be extracted. If the payload carried
+  // any content, the CLI's shape is unrecognized (likely an envelope change),
+  // which would otherwise surface as a silent empty result.
+  if (isRecord(value) && Object.keys(value).length > 0) {
+    onUnrecognized?.({ keys: Object.keys(value) });
+  }
+  return [];
 }
 
 function isRecord(value: unknown): value is RawRecord {

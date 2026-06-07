@@ -59,6 +59,7 @@ export function buildBlockCommand(input: CommandBuildInput): BuiltCommand {
 interface ValidateSettingsOptions {
   enforceRequired: boolean;
   rejectFlagLikeStrings: boolean;
+  optionalRequiredFields?: readonly string[];
 }
 
 export function validateBlockSettings(
@@ -70,7 +71,8 @@ export function validateBlockSettings(
   const errors: string[] = [];
   for (const field of spec.fields) {
     const value = settings[field.key];
-    if (options.enforceRequired && field.required && isBlank(value)) {
+    const requiredFieldCanBeFilledElsewhere = options.optionalRequiredFields?.includes(field.key) ?? false;
+    if (options.enforceRequired && field.required && !requiredFieldCanBeFilledElsewhere && isBlank(value)) {
       errors.push(`${field.label} is required`);
       continue;
     }

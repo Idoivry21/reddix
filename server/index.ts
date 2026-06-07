@@ -2,15 +2,25 @@ import path from 'node:path';
 import { createApp } from './app';
 import { validateEnv, summarizeAuthPresence } from './env';
 import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
+import { createLogger } from './logger';
+import { createMetrics } from './metrics';
 import { createStorage } from './storage';
 
 const { port, dataDir } = validateEnv(process.env);
-console.log(`[reddix] auth tokens: ${summarizeAuthPresence(process.env)}`);
-const storage = createStorage({ baseDir: dataDir });
+const logger = createLogger();
+const metrics = createMetrics();
+logger.info('server.config', {
+  port,
+  dataDir,
+  auth: summarizeAuthPresence(process.env)
+});
+// One logger/metrics instance shared across storage and the app so every layer
+// emits to the same stream and counters accumulate in one registry.
+const storage = createStorage({ baseDir: dataDir, logger });
 const staticDir = process.env.REDDIX_STATIC_DIR ?? path.join(process.cwd(), 'dist');
 const fatalLogSecrets = buildSecretMap(process.env);
 
-const { app, closeClients } = createApp({ storage, dataDir, staticDir });
+const { app, closeClients } = createApp({ storage, dataDir, staticDir, logger, metrics });
 
 // Bind to loopback by default (local single-user). Set HOST=0.0.0.0 only for
 // containerized runs where the port is mapped back to the host; CORS allowlist

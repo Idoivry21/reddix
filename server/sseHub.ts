@@ -1,4 +1,5 @@
 import type { RequestHandler, Response } from 'express';
+import type { EventLogger } from './logger';
 
 interface SseClient {
   id: number;
@@ -15,6 +16,13 @@ interface SseHubOptions {
   retryMs?: number;
   /** Maximum lifetime for a connection that never closes cleanly. */
   idleTimeoutMs?: number;
+  /**
+   * Sink-level redaction applied to every broadcast payload. Callers already
+   * pre-redact run-step fields, but enforcing it here too means a future emit of
+   * an unredacted field cannot leak a token onto the wire (defense in depth).
+   */
+  redact?: (value: string) => string;
+  logger?: EventLogger;
 }
 
 const DEFAULT_MAX_CLIENTS = 50;
@@ -41,6 +49,8 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const redact = options.redact ?? ((value: string) => value);
+  const logger = options.logger;
 
   const clients = new Map<number, SseClient>();
   let clientId = 0;
@@ -96,10 +106,16 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
     request.on('close', () => {
       drop(client);
     });
+    // Distinguish a socket-level failure from a clean close so abnormal drops
+    // are observable instead of silently indistinguishable from a normal exit.
+    request.on('error', (error: Error) => {
+      logger?.warn('sse.socketError', { clientId: id, detail: error.message });
+      drop(client);
+    });
   };
 
   function broadcast(event: string, payload: unknown): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+    const message = redact(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     for (const client of [...clients.values()]) {
       safeWrite(client, message);
     }

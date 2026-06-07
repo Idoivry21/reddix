@@ -1,15 +1,17 @@
 import { constants } from 'node:fs';
-import { mkdir, open, realpath, writeFile } from 'node:fs/promises';
+import { access, mkdir, open, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
 import { nanoid } from 'nanoid';
 import { listBlockSpecs } from '../src/shared/commandBuilders';
 import { getProviderHealthCommands } from '../src/shared/commandBuilders';
 import { validateFlow } from '../src/shared/graph';
-import { buildSecretMap } from '../src/shared/redaction';
+import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
 import { MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
 import { CLI_PROVIDERS } from '../src/shared/providers';
-import { checkExecutable, cliExecutor } from './executor';
+import { checkExecutable, createCliExecutor } from './executor';
+import type { EventLogger } from './logger';
+import { noopMetrics, type Metrics } from './metrics';
 import { runFlow } from './runEngine';
 import { createRateLimiter } from './rateLimiter';
 import { createScheduler } from './scheduler';
@@ -24,12 +26,17 @@ interface RoutesOptions {
   /** Minimum gap between manual /runs triggers per flow (ms). */
   runMinIntervalMs?: number;
   executor?: CliExecutor;
+  logger?: EventLogger;
+  metrics?: Metrics;
 }
 
 export function createRoutes(options: RoutesOptions) {
   const router = express.Router();
-  const sse = createSseHub();
-  const executor = options.executor ?? cliExecutor;
+  const logger = options.logger;
+  const metrics = options.metrics ?? noopMetrics;
+  const secrets = buildSecretMap(process.env);
+  const sse = createSseHub({ logger, redact: (value) => redactSecrets(value, secrets) });
+  const executor = options.executor ?? createCliExecutor({ logger, metrics });
   // Throttle the subprocess-spawning /runs route per flow to protect accounts
   // and the host from rapid repeated triggers.
   const runRateLimiter = createRateLimiter({
@@ -39,6 +46,8 @@ export function createRoutes(options: RoutesOptions) {
   const scheduler = createScheduler({
     minIntervalMs: MIN_SCHEDULE_INTERVAL_MS,
     jitterMs: 30 * 1000,
+    logger,
+    metrics,
     runFlow: async (flowId) => {
       return runAndStore(flowId);
     },
@@ -65,14 +74,29 @@ export function createRoutes(options: RoutesOptions) {
 
   // Restore persisted schedules at startup, then start the timer.
   void (async () => {
+    let attempted = 0;
+    let synced = 0;
     try {
-      for (const flow of await options.storage.listFlows()) {
+      const flows = await options.storage.listFlows();
+      attempted = flows.length;
+      for (const flow of flows) {
         syncSchedule(flow);
+        if (flow.schedule?.enabled) {
+          synced += 1;
+        }
       }
+      logger?.info('schedules.restored', { attempted, synced });
     } catch (error) {
-      console.error('[reddix] failed to restore schedules:', error);
+      // Recovery failed: the scheduler will start with zero flows. Surface this
+      // as a structured, degraded-startup signal — not a bare console line.
+      logger?.error('schedules.restoreFailed', {
+        attempted,
+        synced,
+        detail: error instanceof Error ? error.message : String(error)
+      });
     } finally {
       scheduler.start();
+      logger?.info('scheduler.started', {});
     }
   })();
 
@@ -84,7 +108,21 @@ export function createRoutes(options: RoutesOptions) {
         available: await checkExecutable(command.executable)
       }))
     );
-    response.json({ ok: true, app: 'Reddix', providers });
+    // `ok` reflects SERVER health — can the app persist runs? Missing CLI
+    // binaries are a normal, separately-reported state (the app's job is to
+    // detect and report them), not a server outage, so they do not flip `ok`.
+    const storageWritable = await isDataDirWritable(options.dataDir);
+    const ok = storageWritable;
+    if (!ok) {
+      logger?.error('health.degraded', { storageWritable });
+    }
+    response
+      .status(ok ? 200 : 503)
+      .json({ ok, app: 'Reddix', providers, storage: { writable: storageWritable }, sseClients: sse.clientCount });
+  });
+
+  router.get('/metrics', (_request, response) => {
+    response.json(metrics.snapshot());
   });
 
   router.get('/blocks', (_request, response) => {
@@ -102,7 +140,9 @@ export function createRoutes(options: RoutesOptions) {
       // Rejects `..`/absolute paths that would escape the artifacts directory.
       safePath = resolveContainedPath(artifactsDir, relPath);
     } catch {
-      response.status(400).json({ error: 'Invalid artifact path' });
+      // Log the rejected relative path so traversal attempts are auditable.
+      logger?.warn('artifact.invalidPath', { relPath });
+      response.status(400).json({ error: 'Invalid artifact path', code: 'INVALID_ARTIFACT_PATH' });
       return;
     }
     try {
@@ -135,6 +175,9 @@ export function createRoutes(options: RoutesOptions) {
         response.status(404).json({ error: 'Artifact not found' });
         return;
       }
+      // Unexpected fs error (EACCES, EMFILE, …): log with the requested path and
+      // error code before re-throwing, so the resulting 500 is not anonymous.
+      logger?.error('artifact.readFailed', { relPath, code: code ?? 'unknown' });
       throw error;
     }
   });
@@ -163,7 +206,10 @@ export function createRoutes(options: RoutesOptions) {
     }
     const parsed = parseFlowPutBody(request.body);
     if (!parsed.success) {
-      response.status(400).json({ error: `Invalid flow body: ${formatZodError(parsed.error)}` });
+      response.status(400).json({
+        error: `Invalid flow body: ${formatZodError(parsed.error)}`,
+        code: 'VALIDATION_FAILED'
+      });
       return;
     }
     const incoming = parsed.data.flow;
@@ -184,7 +230,8 @@ export function createRoutes(options: RoutesOptions) {
     const validation = validateFlow(flow);
     if (!validation.valid) {
       response.status(400).json({
-        error: `Invalid flow graph: ${validation.errors.map((error) => `${error.nodeId}: ${error.message}`).join('; ')}`
+        error: `Invalid flow graph: ${validation.errors.map((error) => `${error.nodeId}: ${error.message}`).join('; ')}`,
+        code: 'INVALID_FLOW_GRAPH'
       });
       return;
     }
@@ -204,11 +251,19 @@ export function createRoutes(options: RoutesOptions) {
   router.post('/runs', async (request, response) => {
     const parsed = parseRunPostBody(request.body);
     if (!parsed.success) {
-      response.status(400).json({ error: `Invalid run request: ${formatZodError(parsed.error)}` });
+      response.status(400).json({
+        error: `Invalid run request: ${formatZodError(parsed.error)}`,
+        code: 'VALIDATION_FAILED'
+      });
       return;
     }
     if (!runRateLimiter.tryAcquire(parsed.data.flowId)) {
-      response.status(429).json({ error: 'Too many runs for this flow; please wait before retrying' });
+      metrics.increment('run_rate_limited_total');
+      logger?.warn('run.rateLimited', { flowId: parsed.data.flowId });
+      response.status(429).json({
+        error: 'Too many runs for this flow; please wait before retrying',
+        code: 'RATE_LIMITED'
+      });
       return;
     }
     const run = (await scheduler.triggerNow(parsed.data.flowId)) as RunRecord;
@@ -232,7 +287,8 @@ export function createRoutes(options: RoutesOptions) {
     if (!result.triggered) {
       response.status(429).json({
         error: 'Schedule is not due yet',
-        nextRunAt: result.nextRunAt ? new Date(result.nextRunAt).toISOString() : null
+        code: 'SCHEDULE_NOT_DUE',
+        details: { nextRunAt: result.nextRunAt ? new Date(result.nextRunAt).toISOString() : null }
       });
       return;
     }
@@ -240,9 +296,16 @@ export function createRoutes(options: RoutesOptions) {
     response.status(run.status === 'failed' ? 422 : 200).json({ run });
   });
 
+  // A storage failure here propagates to the caller on purpose. The two callers
+  // both handle it safely and honestly: the scheduler tick wraps triggerDue in
+  // try/catch (so a persist error is logged, never an unhandled rejection that
+  // crashes the process), and the manual POST /runs path surfaces it as a 500
+  // so the client is not told a run was saved when it was not.
   async function runAndStore(flowId: string): Promise<RunRecord> {
     const flow = await options.storage.getFlow(flowId);
     if (!flow) {
+      logger?.warn('run.flowNotFound', { flowId });
+      metrics.increment('flow_runs_total', { status: 'failed' });
       const run = failedRun(flowId, 'Flow not found');
       await options.storage.appendRun(run);
       return run;
@@ -250,9 +313,11 @@ export function createRoutes(options: RoutesOptions) {
     const run = await runFlow({
       flow,
       executor,
-      secrets: buildSecretMap(process.env),
+      secrets,
       writeArtifact: writeArtifact(options.dataDir),
-      emit: (event) => sse.broadcast('run-step', event)
+      emit: (event) => sse.broadcast('run-step', event),
+      logger,
+      metrics
     });
     await options.storage.appendRun(run);
     sse.broadcast('run-complete', { run });
@@ -265,6 +330,21 @@ export function createRoutes(options: RoutesOptions) {
   }
 
   return { router, eventsHandler: sse.handler, closeClients: dispose };
+}
+
+/**
+ * Probe whether the data directory can be written. Used by /health so a broken
+ * data dir (the thing that actually fails runs) is reported, not masked behind
+ * a hardcoded ok:true.
+ */
+async function isDataDirWritable(dataDir: string): Promise<boolean> {
+  try {
+    await mkdir(dataDir, { recursive: true });
+    await access(dataDir, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Unique CLI providers a flow touches, derived from its node types. */

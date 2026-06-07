@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import { buildBlockCommand } from '../src/shared/commandBuilders';
 import { buildTimestampedExportPath, serializeCsv, serializeJson, serializeMarkdown } from '../src/shared/exporters';
 import { serializeHtml } from '../src/shared/htmlReport';
+import { resolveInputBoundSettings } from '../src/shared/inputBindings';
 import type { FlowEdgeModel, FlowNodeModel } from '../src/shared/graph';
 import { validateFlow } from '../src/shared/graph';
 import { normalizeRedditPayload, normalizeTwitterPayload } from '../src/shared/normalizers';
@@ -9,6 +10,8 @@ import { redactSecrets } from '../src/shared/redaction';
 import type { SecretMap } from '../src/shared/redaction';
 import { applyEngagementFilter, applyFilterText, applyLimit, applyMerge, applySort } from '../src/shared/transforms';
 import type { RunSampleRow, SocialItem } from '../src/shared/types';
+import type { EventLogger } from './logger';
+import { noopMetrics, type Metrics } from './metrics';
 import type { CliExecutor, FlowDefinition, RunRecord, RunStep } from './types';
 
 /** Cap the rows carried on a run so payloads/SSE/persisted records stay bounded. */
@@ -26,16 +29,28 @@ interface RunFlowOptions {
   secrets?: SecretMap;
   now?: () => Date;
   emit?: (event: { type: string; step?: RunStep }) => void;
+  /** Optional structured logger; flow/step lifecycle is logged when provided. */
+  logger?: EventLogger;
+  /** Optional metrics sink for run/step counters and durations. */
+  metrics?: Metrics;
 }
 
 export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   const now = options.now ?? (() => new Date());
   const secrets = options.secrets ?? {};
+  const logger = options.logger;
+  const metrics = options.metrics ?? noopMetrics;
+  const flowId = options.flow.id;
   const redact = (value: string): string => redactSecrets(value, secrets);
   const redactArgv = (value: string[]): string[] => redactSecrets(value, secrets);
   const startedAt = now().toISOString();
   const validation = validateFlow(options.flow);
   if (!validation.valid) {
+    logger?.warn('flow.invalid', {
+      flowId,
+      errors: validation.errors.length
+    });
+    metrics.increment('flow_runs_total', { status: 'failed' });
     return {
       schemaVersion: 1,
       id: nanoid(),
@@ -62,25 +77,48 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   let sample: RunSampleRow[] = [];
   let failed = false;
 
+  const flowStart = now().getTime();
+  logger?.info('flow.start', { flowId, nodeCount: nodes.length });
+
+  // Single place that records a step: pushes it, streams it over SSE, and logs
+  // structural fields only (never stderr/error/argv content, which may carry a
+  // token even after redaction — keep the log surface minimal).
+  const recordStep = (step: RunStep, nodeType: string): void => {
+    steps.push(step);
+    options.emit?.({ type: 'step', step });
+    logger?.info('flow.step', {
+      flowId,
+      blockId: step.blockId,
+      type: nodeType,
+      status: step.status,
+      exitCode: step.exitCode ?? null,
+      durationMs: Date.parse(step.endedAt) - Date.parse(step.startedAt)
+    });
+    if (step.status === 'failed') {
+      metrics.increment('step_failed_total', { type: nodeType });
+    }
+  };
+
   for (const node of nodes) {
     const dependencyEdges = edgesByTarget.get(node.id) ?? [];
     const dependencyBlocked =
       blocked.has(node.id) || dependencyEdges.some((edge) => blocked.has(edge.source));
     if (dependencyBlocked) {
       const step = makeStep(node.id, 'skipped', now, { error: 'Skipped because an upstream step failed' });
-      steps.push(step);
-      options.emit?.({ type: 'step', step });
+      recordStep(step, node.type);
       markDownstreamBlocked(node.id, edgesBySource, blocked);
       continue;
     }
 
     const stepStarted = now().toISOString();
     try {
+      const inputItems = dependencyEdges.flatMap((edge) => data.get(edge.source) ?? []);
       if (isCliNode(node)) {
+        const settings = resolveInputBoundSettings(node.type, node.settings, inputItems);
         const command = buildBlockCommand({
           blockId: node.id,
           blockType: node.type,
-          settings: node.settings
+          settings
         });
         const result = await options.executor(command);
         // CLIs report logical failures via a `{ ok: false, error }` JSON
@@ -103,8 +141,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
             endedAt: now().toISOString(),
             error: redact(message)
           };
-          steps.push(step);
-          options.emit?.({ type: 'step', step });
+          recordStep(step, node.type);
           markDownstreamBlocked(node.id, edgesBySource, blocked);
           if (options.flow.failFast) {
             break;
@@ -112,13 +149,33 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
           continue;
         }
 
+        // Exit 0 with empty stdout is treated as "no results", but it can also
+        // mask an auth/network failure that produced no output. Warn so the two
+        // are distinguishable in logs.
+        if (!result.stdout.trim()) {
+          logger?.warn('cli.emptyStdout', {
+            flowId,
+            blockId: node.id,
+            provider: command.provider,
+            exitCode: result.exitCode,
+            stderr: summarizeStdout(redact(result.stderr))
+          });
+        }
+
         const payload = parseJson(result.stdout);
-        data.set(
-          node.id,
+        const onUnrecognized = (info: { keys: string[] }): void => {
+          logger?.warn('cli.unrecognizedPayload', {
+            flowId,
+            blockId: node.id,
+            provider: command.provider,
+            keys: info.keys
+          });
+        };
+        const items =
           command.provider === 'reddit'
-            ? normalizeRedditPayload(payload, node.id)
-            : normalizeTwitterPayload(payload, node.id)
-        );
+            ? normalizeRedditPayload(payload, node.id, onUnrecognized)
+            : normalizeTwitterPayload(payload, node.id, onUnrecognized);
+        data.set(node.id, items);
         const step: RunStep = {
           blockId: node.id,
           status: 'success',
@@ -129,12 +186,10 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
           startedAt: stepStarted,
           endedAt: now().toISOString()
         };
-        steps.push(step);
-        options.emit?.({ type: 'step', step });
+        recordStep(step, node.type);
         continue;
       }
 
-      const inputItems = dependencyEdges.flatMap((edge) => data.get(edge.source) ?? []);
       if (node.type === 'transform.limit') {
         data.set(node.id, applyLimit(inputItems, node.settings));
       } else if (node.type === 'transform.filterText') {
@@ -153,17 +208,39 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
         data.set(node.id, inputItems);
       }
 
+      // For transforms, log input vs output counts so "filter dropped 100→0"
+      // (intentional) is distinguishable from "filter is broken" (a bug). For
+      // mergeStreams this also surfaces how many duplicates were dropped.
+      if (node.type.startsWith('transform.')) {
+        const outCount = data.get(node.id)?.length ?? 0;
+        logger?.info('flow.transform', {
+          flowId,
+          blockId: node.id,
+          type: node.type,
+          inputCount: inputItems.length,
+          outputCount: outCount,
+          dropped: inputItems.length - outCount
+        });
+      }
+
       const step = makeStep(node.id, 'success', now, { startedAt: stepStarted });
-      steps.push(step);
-      options.emit?.({ type: 'step', step });
+      recordStep(step, node.type);
     } catch (error) {
       failed = true;
+      // The error message lands in the step record; the log adds the operation
+      // class so a thrown transform/export/parse error is not an anonymous 500.
+      logger?.error('flow.stepError', {
+        flowId,
+        blockId: node.id,
+        type: node.type,
+        operation: operationOf(node),
+        detail: redact(error instanceof Error ? error.message : String(error))
+      });
       const step = makeStep(node.id, 'failed', now, {
         startedAt: stepStarted,
         error: redact(error instanceof Error ? error.message : String(error))
       });
-      steps.push(step);
-      options.emit?.({ type: 'step', step });
+      recordStep(step, node.type);
       markDownstreamBlocked(node.id, edgesBySource, blocked);
       if (options.flow.failFast) {
         break;
@@ -183,11 +260,26 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     sample = toSampleRows(largest, redact);
   }
 
+  const status = failed ? 'failed' : 'success';
+  const durationMs = now().getTime() - flowStart;
+  const counts = countStatuses(steps);
+  metrics.increment('flow_runs_total', { status });
+  metrics.observe('flow_duration_ms', durationMs, { status });
+  logger?.info('flow.end', {
+    flowId,
+    status,
+    durationMs,
+    steps: steps.length,
+    succeeded: counts.success,
+    failed: counts.failed,
+    skipped: counts.skipped
+  });
+
   return {
     schemaVersion: 1,
     id: nanoid(),
     flowId: options.flow.id,
-    status: failed ? 'failed' : 'success',
+    status,
     startedAt,
     endedAt: now().toISOString(),
     steps,
@@ -195,6 +287,29 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     error: failed ? 'One or more steps failed' : null,
     sample
   };
+}
+
+/** Coarse operation class for a node, used to label step-failure logs. */
+function operationOf(node: FlowNodeModel): string {
+  if (isCliNode(node)) {
+    return 'cli';
+  }
+  if (node.type.startsWith('output.')) {
+    return 'export';
+  }
+  return 'transform';
+}
+
+function countStatuses(steps: RunStep[]): { success: number; failed: number; skipped: number } {
+  return steps.reduce(
+    (counts, step) => {
+      if (step.status === 'success') counts.success += 1;
+      else if (step.status === 'failed') counts.failed += 1;
+      else if (step.status === 'skipped') counts.skipped += 1;
+      return counts;
+    },
+    { success: 0, failed: 0, skipped: 0 }
+  );
 }
 
 /**

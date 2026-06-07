@@ -1,4 +1,5 @@
 import { getBlockSpec, validateBlockSettings } from './commandBuilders';
+import { inputBoundFieldKeys } from './inputBindings';
 import type { BlockSpec } from './types';
 import type { PortSpec } from './types';
 
@@ -48,6 +49,7 @@ export function validateFlow(flow: FlowModel): { valid: boolean; errors: Validat
   const errors: ValidationError[] = [];
   const nodesById = new Map(flow.nodes.map((node) => [node.id, node]));
   const specsByNodeId = new Map<string, BlockSpec>();
+  const hasIncomingInput = new Set(flow.edges.map((edge) => edge.target));
 
   for (const node of flow.nodes) {
     let spec: BlockSpec;
@@ -61,7 +63,12 @@ export function validateFlow(flow: FlowModel): { valid: boolean; errors: Validat
       continue;
     }
     specsByNodeId.set(node.id, spec);
-    for (const message of validateBlockSettings(node.type, node.settings)) {
+    const optionalRequiredFields = hasIncomingInput.has(node.id) ? inputBoundFieldKeys(node.type) : [];
+    for (const message of validateBlockSettings(node.type, node.settings, {
+      enforceRequired: true,
+      rejectFlagLikeStrings: true,
+      optionalRequiredFields
+    })) {
       errors.push({ nodeId: node.id, message });
     }
   }

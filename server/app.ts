@@ -3,9 +3,10 @@ import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import { buildCorsOptions } from './cors';
-import { csrfGuard } from './csrfGuard';
+import { createCsrfGuard } from './csrfGuard';
 import { createErrorHandler } from './errorHandler';
-import { createLogger } from './logger';
+import { createLogger, type Logger } from './logger';
+import { createMetrics, type Metrics } from './metrics';
 import { createRoutes } from './routes';
 import type { createStorage } from './storage';
 
@@ -14,6 +15,10 @@ interface CreateAppOptions {
   dataDir: string;
   /** When set and present on disk, the built SPA is served from here. */
   staticDir?: string;
+  /** Shared logger; created if not supplied (and shared with storage in index). */
+  logger?: Logger;
+  /** Shared metrics registry; created if not supplied. */
+  metrics?: Metrics;
 }
 
 export interface CreatedApp {
@@ -28,15 +33,18 @@ export interface CreatedApp {
  */
 export function createApp(options: CreateAppOptions): CreatedApp {
   const app = express();
-  const logger = createLogger();
+  const logger = options.logger ?? createLogger();
+  const metrics = options.metrics ?? createMetrics();
   const { router, eventsHandler, closeClients } = createRoutes({
     storage: options.storage,
-    dataDir: options.dataDir
+    dataDir: options.dataDir,
+    logger,
+    metrics
   });
 
   app.use(logger.requestLogger());
   app.use(cors(buildCorsOptions(process.env)));
-  app.use(csrfGuard);
+  app.use(createCsrfGuard(logger));
   app.use(express.json({ limit: '2mb' }));
   app.get('/events', eventsHandler);
   app.use('/api', router);

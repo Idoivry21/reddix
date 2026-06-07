@@ -1,3 +1,5 @@
+import type { EventLogger } from './logger';
+
 /**
  * Serializes async tasks per key. Tasks sharing a key run one-at-a-time in
  * submission order; tasks with different keys run concurrently. Used to make
@@ -7,7 +9,7 @@ export interface KeyedMutex {
   run: <T>(key: string, task: () => Promise<T>) => Promise<T>;
 }
 
-export function createKeyedMutex(): KeyedMutex {
+export function createKeyedMutex(logger?: EventLogger): KeyedMutex {
   const tails = new Map<string, Promise<unknown>>();
 
   return {
@@ -18,7 +20,16 @@ export function createKeyedMutex(): KeyedMutex {
       const result = previous.then(task, task);
       const settled = result.then(
         () => undefined,
-        () => undefined
+        (error) => {
+          // The caller's `result` still rejects; this branch only exists to
+          // keep the queue moving. Log so a failed appendRun (lost run record)
+          // is not silently swallowed by the never-rejecting queue tail.
+          logger?.warn('mutex.taskFailed', {
+            key,
+            detail: error instanceof Error ? error.message : String(error)
+          });
+          return undefined;
+        }
       );
       tails.set(key, settled);
       void settled.then(() => {

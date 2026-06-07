@@ -224,6 +224,71 @@ describe('run engine', () => {
 
     expect(result.sample).toHaveLength(50);
   });
+
+  it('uses upstream tweet ids when a wired Tweet Detail block has a blank id field', async () => {
+    const commands: string[][] = [];
+    const flow: FlowDefinition = {
+      id: 'tweet-detail-flow',
+      name: 'Tweet Detail Flow',
+      failFast: false,
+      nodes: [
+        {
+          id: 'search',
+          type: 'twitter.searchTweets',
+          settings: { query: 'bedroom', tab: 'top', maxCount: 10, fullText: true }
+        },
+        {
+          id: 'detail',
+          type: 'twitter.tweetDetail',
+          settings: { tweetIdOrUrl: '', fullText: true }
+        }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'detail', sourcePortId: 'items', targetPortId: 'items' }]
+    };
+
+    const result = await runFlow({
+      flow,
+      executor: async (command) => {
+        commands.push(command.argv);
+        if (command.argv[0] === 'search') {
+          return {
+            stdout: JSON.stringify({
+              data: [
+                {
+                  id: '2063363922716188763',
+                  text: 'A search result',
+                  author: { screenName: 'public_cli' },
+                  createdAtISO: '2026-06-06T20:54:29+00:00'
+                }
+              ]
+            }),
+            stderr: '',
+            exitCode: 0
+          };
+        }
+        return {
+          stdout: JSON.stringify({
+            data: {
+              id: '2063363922716188763',
+              text: 'The detailed tweet',
+              author: { screenName: 'public_cli' },
+              createdAtISO: '2026-06-06T20:54:29+00:00'
+            }
+          }),
+          stderr: '',
+          exitCode: 0
+        };
+      },
+      writeArtifact: async (filePath, contents) => ({ path: filePath, bytes: contents.length }),
+      now: () => new Date('2026-06-01T10:00:00Z')
+    });
+
+    expect(result.status).toBe('success');
+    expect(commands).toEqual([
+      ['search', 'bedroom', '--type', 'top', '--max', '10', '--full-text', '--json'],
+      ['tweet', '2063363922716188763', '--full-text', '--json']
+    ]);
+  });
 });
 
 function starterFlow(): FlowDefinition {

@@ -5,6 +5,8 @@ export interface ProviderHealthState {
   providers: ProviderHealth[];
   loading: boolean;
   error: boolean;
+  /** Human-readable reason when the health check failed, for diagnostics. */
+  errorReason?: string;
 }
 
 /**
@@ -21,7 +23,7 @@ export function useProviderHealth(): ProviderHealthState {
 
   useEffect(() => {
     if (typeof fetch === 'undefined') {
-      setState({ providers: [], loading: false, error: true });
+      setState({ providers: [], loading: false, error: true, errorReason: 'fetch unavailable' });
       return;
     }
     let cancelled = false;
@@ -31,9 +33,12 @@ export function useProviderHealth(): ProviderHealthState {
           setState({ providers: health.providers ?? [], loading: false, error: false });
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!cancelled) {
-          setState({ providers: [], loading: false, error: true });
+          const reason = error instanceof Error ? error.message : 'Unknown error';
+          // Diagnostic trail: distinguishes backend-down from network failure.
+          console.warn('Provider health check failed:', reason);
+          setState({ providers: [], loading: false, error: true, errorReason: reason });
         }
       });
     return () => {

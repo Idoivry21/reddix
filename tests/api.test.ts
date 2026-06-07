@@ -33,6 +33,19 @@ describe('saveFlow', () => {
 
     await expect(saveFlow('primary', { flow: {} } as never)).rejects.toThrow();
   });
+
+  it('surfaces the server error message instead of a bare status (finding 6)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({ error: 'Invalid flow graph: node3: missing required field' }, false, 400)
+      )
+    );
+
+    await expect(saveFlow('primary', { flow: {} } as never)).rejects.toThrow(
+      'Invalid flow graph: node3: missing required field'
+    );
+  });
 });
 
 describe('postRun', () => {

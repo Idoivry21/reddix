@@ -9,6 +9,17 @@ interface LoggerOptions {
 }
 
 /**
+ * Structural subset of the logger that downstream modules depend on. Accepting
+ * this (rather than the full {@link Logger}) keeps the execution layer decoupled
+ * from the Express-specific `requestLogger` and lets callers pass a stub in tests.
+ */
+export interface EventLogger {
+  info(message: string, fields?: Record<string, unknown>): void;
+  warn(message: string, fields?: Record<string, unknown>): void;
+  error(message: string, fields?: Record<string, unknown>): void;
+}
+
+/**
  * Minimal structured (JSON-line) logger that scrubs known auth secrets from
  * every emitted value, so tokens can never reach stdout/stderr logs.
  */
@@ -23,6 +34,7 @@ export function createLogger(options: LoggerOptions = {}) {
 
   return {
     info: (message: string, fields: LogFields = {}) => emit('info', message, fields),
+    warn: (message: string, fields: LogFields = {}) => emit('warn', message, fields),
     error: (message: string, fields: LogFields = {}) => emit('error', message, fields),
     /** Express middleware logging method, path, status, and duration per request. */
     requestLogger() {

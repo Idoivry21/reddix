@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import type { EventLogger } from './logger';
 
 /**
  * State-mutating HTTP methods a cross-site page could use to drive the local
@@ -35,18 +36,33 @@ export function isCrossSiteMutation(method: string, secFetchSite: string | undef
 }
 
 /**
- * Express middleware that blocks cross-site state-mutating requests with 403.
- * Complements the CORS allowlist by stopping simple (non-preflighted) cross
- * origin requests that would otherwise reach the run/schedule handlers.
+ * Build the CSRF middleware that blocks cross-site state-mutating requests with
+ * 403. Complements the CORS allowlist by stopping simple (non-preflighted) cross
+ * origin requests that would otherwise reach the run/schedule handlers. When a
+ * logger is supplied, rejections are logged with the offending Sec-Fetch-Site
+ * value for security forensics; the value is never returned to the client.
  */
-export function csrfGuard(req: Request, res: Response, next: NextFunction): void {
-  const header = req.headers['sec-fetch-site'];
-  const secFetchSite = Array.isArray(header) ? header[0] : header;
+export function createCsrfGuard(logger?: EventLogger) {
+  return function csrfGuard(req: Request, res: Response, next: NextFunction): void {
+    const header = req.headers['sec-fetch-site'];
+    const secFetchSite = Array.isArray(header) ? header[0] : header;
 
-  if (isCrossSiteMutation(req.method, secFetchSite)) {
-    res.status(403).json({ error: 'Forbidden: cross-site request rejected' });
-    return;
-  }
+    if (isCrossSiteMutation(req.method, secFetchSite)) {
+      logger?.warn('csrf.blocked', {
+        method: req.method,
+        path: req.path,
+        secFetchSite: secFetchSite ?? 'missing'
+      });
+      res.status(403).json({
+        error: 'Forbidden: cross-site request rejected',
+        code: 'CROSS_SITE_BLOCKED'
+      });
+      return;
+    }
 
-  next();
+    next();
+  };
 }
+
+/** Default guard with no logger, for direct `app.use(csrfGuard)` and tests. */
+export const csrfGuard = createCsrfGuard();

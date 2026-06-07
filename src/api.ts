@@ -46,10 +46,28 @@ export interface HealthResponse {
   providers: ProviderHealth[];
 }
 
+/**
+ * Build an error message from a failed response, preferring the backend's
+ * `{ error }` body (which carries the actionable detail — e.g. which flow field
+ * is invalid) over a bare status code. Falls back to the status when the body is
+ * missing or not JSON.
+ */
+async function readErrorMessage(response: Response, fallbackVerb: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (body && typeof body.error === 'string' && body.error.trim()) {
+      return body.error;
+    }
+  } catch {
+    // Body was empty or not JSON; fall through to the status-based message.
+  }
+  return `${fallbackVerb} (status ${response.status})`;
+}
+
 export async function fetchHealth(): Promise<HealthResponse> {
   const response = await fetch('/api/health');
   if (!response.ok) {
-    throw new Error('Backend health check failed');
+    throw new Error(await readErrorMessage(response, 'Backend health check failed'));
   }
   return (await response.json()) as HealthResponse;
 }
@@ -57,7 +75,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
 export async function listFlows(): Promise<PersistedFlow[]> {
   const response = await fetch('/api/flows');
   if (!response.ok) {
-    throw new Error(`Failed to list flows (status ${response.status})`);
+    throw new Error(await readErrorMessage(response, 'Failed to list flows'));
   }
   const payload = (await response.json()) as { flows?: PersistedFlow[] };
   return payload.flows ?? [];
@@ -69,7 +87,7 @@ export async function getFlow(flowId: string): Promise<PersistedFlow | null> {
     return null;
   }
   if (!response.ok) {
-    throw new Error(`Failed to load flow (status ${response.status})`);
+    throw new Error(await readErrorMessage(response, 'Failed to load flow'));
   }
   const payload = (await response.json()) as { flow: PersistedFlow };
   return payload.flow;
@@ -82,7 +100,7 @@ export async function saveFlow(flowId: string, body: FlowRequestBody): Promise<P
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    throw new Error(`Failed to save flow (status ${response.status})`);
+    throw new Error(await readErrorMessage(response, 'Failed to save flow'));
   }
   const payload = (await response.json()) as { flow: PersistedFlow };
   return payload.flow;
@@ -94,15 +112,18 @@ export async function postRun(flowId: string): Promise<RunRecord> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ flowId })
   });
-  let payload: { run?: RunRecord };
+  let payload: { run?: RunRecord; error?: string };
   try {
-    payload = (await response.json()) as { run?: RunRecord };
+    payload = (await response.json()) as { run?: RunRecord; error?: string };
   } catch {
-    throw new Error(`Run failed (status ${response.status})`);
+    // No parseable body: a 5xx with an empty/HTML body or a mid-response network
+    // failure. Distinguish from the expected "422 with a failed run" case below.
+    throw new Error(`Run request failed (status ${response.status})`);
   }
-  // A 422 still carries a failed RunRecord; only a missing body is a real error.
+  // A 422 still carries a failed RunRecord; only a missing run body is a real
+  // error. Surface the server's error message when it provided one.
   if (!payload.run) {
-    throw new Error(`Run failed (status ${response.status})`);
+    throw new Error(payload.error ?? `Run failed (status ${response.status})`);
   }
   return payload.run;
 }
@@ -110,7 +131,7 @@ export async function postRun(flowId: string): Promise<RunRecord> {
 export async function listRuns(flowId: string): Promise<RunRecord[]> {
   const response = await fetch(`/api/runs/${flowId}`);
   if (!response.ok) {
-    throw new Error(`Failed to list runs (status ${response.status})`);
+    throw new Error(await readErrorMessage(response, 'Failed to list runs'));
   }
   const payload = (await response.json()) as { runs?: RunRecord[] };
   return payload.runs ?? [];
@@ -125,10 +146,17 @@ export interface RunCompleteEvent {
   run: RunRecord;
 }
 
+/** Why onError fired: a transport/connection drop vs. an unparseable event. */
+export interface RunEventError {
+  phase: 'connection' | 'parse';
+  /** EventSource.readyState (0=connecting, 1=open, 2=closed) when known. */
+  readyState?: number;
+}
+
 export interface RunEventHandlers {
   onStep?: (event: RunStepEvent) => void;
   onComplete?: (event: RunCompleteEvent) => void;
-  onError?: () => void;
+  onError?: (error?: RunEventError) => void;
 }
 
 type EventSourceFactory = (url: string) => EventSource;
@@ -149,7 +177,7 @@ export function subscribeRunEvents(
     if (parsed) {
       handlers.onStep?.(parsed);
     } else {
-      handlers.onError?.();
+      handlers.onError?.({ phase: 'parse' });
     }
   });
   source.addEventListener('run-complete', (event) => {
@@ -157,11 +185,14 @@ export function subscribeRunEvents(
     if (parsed) {
       handlers.onComplete?.(parsed);
     } else {
-      handlers.onError?.();
+      handlers.onError?.({ phase: 'parse' });
     }
   });
+  // The browser EventSource auto-reconnects using the server's `retry` hint, so
+  // an 'error' here is usually a transient drop, not fatal. Surface the
+  // readyState so callers can say "reconnecting…" vs "stream closed".
   source.addEventListener('error', () => {
-    handlers.onError?.();
+    handlers.onError?.({ phase: 'connection', readyState: source.readyState });
   });
 
   return () => source.close();

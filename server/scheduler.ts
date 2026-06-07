@@ -6,6 +6,9 @@ interface ScheduleRegistration {
   providers: string[];
 }
 
+import type { EventLogger } from './logger';
+import { noopMetrics, type Metrics } from './metrics';
+
 interface SchedulerOptions {
   minIntervalMs: number;
   jitterMs: number;
@@ -19,6 +22,8 @@ interface SchedulerOptions {
   onSkip: (flowId: string) => Promise<unknown>;
   now?: () => number;
   random?: () => number;
+  logger?: EventLogger;
+  metrics?: Metrics;
 }
 
 interface ScheduleState extends ScheduleRegistration {
@@ -32,6 +37,8 @@ const DEFAULT_MAX_CONCURRENT_RUNS = 8;
 export function createScheduler(options: SchedulerOptions) {
   const now = options.now ?? (() => Date.now());
   const random = options.random ?? Math.random;
+  const logger = options.logger;
+  const metrics = options.metrics ?? noopMetrics;
   const providerSpacingMs = options.providerSpacingMs ?? DEFAULT_PROVIDER_SPACING_MS;
   const tickMs = options.tickMs ?? DEFAULT_TICK_MS;
   const maxConcurrentRuns = Math.max(1, Math.floor(options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS));
@@ -74,10 +81,14 @@ export function createScheduler(options: SchedulerOptions) {
 
   async function triggerNow(flowId: string): Promise<unknown> {
     if (running.has(flowId)) {
+      logger?.info('schedule.skipped', { flowId, reason: 'already-running' });
+      metrics.increment('schedule_skipped_total', { reason: 'already-running' });
       return options.onSkip(flowId);
     }
     running.add(flowId);
     await acquireRunSlot();
+    logger?.info('schedule.triggered', { flowId });
+    metrics.increment('schedule_triggered_total');
     try {
       return await options.runFlow(flowId);
     } finally {
@@ -139,13 +150,34 @@ export function createScheduler(options: SchedulerOptions) {
         .filter(([, state]) => state.enabled && !state.paused && at >= state.nextRunAt)
         .sort((a, b) => a[1].nextRunAt - b[1].nextRunAt);
 
+      let fired = 0;
+      let deferred = 0;
       for (const [flowId, state] of due) {
         // Per-provider spacing: defer (do NOT advance next-run) so this flow is
         // retried on the next tick once the provider window clears.
         if (!isProviderSpaced(state.providers, at)) {
+          deferred += 1;
+          metrics.increment('schedule_deferred_total', { reason: 'provider-spacing' });
+          logger?.info('schedule.deferred', { flowId, reason: 'provider-spacing' });
           continue;
         }
-        await triggerDue(flowId);
+        // CRITICAL: a rejection here (e.g. a storage write error inside runFlow)
+        // would otherwise propagate out of `void tick()` as an unhandled
+        // rejection and crash the whole process. Contain it per-flow, log it,
+        // and keep evaluating the remaining due flows.
+        try {
+          await triggerDue(flowId);
+          fired += 1;
+        } catch (error) {
+          metrics.increment('schedule_tick_errors_total');
+          logger?.error('schedule.tickError', {
+            flowId,
+            detail: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+      if (due.length > 0) {
+        logger?.info('schedule.tick', { dueCount: due.length, fired, deferred });
       }
     } finally {
       tickInFlight = false;

@@ -278,7 +278,13 @@ export function useWorkbenchState() {
           const entries = runsToHistoryEntries(runs);
           setConsoleState((current) => ({ ...current, history: mergeHistory(entries, current.history) }));
         })
-        .catch(() => pushToast('Could not load run history', 'warning'));
+        .catch((error: unknown) => {
+          // Carry the server's reason (server error vs. network) into the toast
+          // and console so a failed history load is diagnosable, not generic.
+          const reason = error instanceof Error ? error.message : 'unknown error';
+          console.warn('Failed to load run history:', reason);
+          pushToast(`Could not load run history: ${reason}`, 'warning');
+        });
     },
     [pushToast]
   );

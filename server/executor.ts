@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { AUTH_ENV_KEYS } from '../src/shared/redaction';
 import type { BuiltCommand } from '../src/shared/types';
 import { createCappedBuffer } from './cappedBuffer';
+import type { EventLogger } from './logger';
+import { noopMetrics, type Metrics } from './metrics';
 import type { CliExecutor, ExecutorResult } from './types';
 
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10 MiB per stream
@@ -114,12 +116,55 @@ export function spawnCapped(
   });
 }
 
-export const cliExecutor: CliExecutor = (command: BuiltCommand) =>
-  spawnCapped(command.executable, command.argv, {
-    env: buildCliEnv(process.env),
-    maxOutputBytes: resolveMaxOutputBytes(process.env),
-    timeoutMs: resolveCliTimeoutMs(process.env)
-  });
+interface CliExecutorDeps {
+  logger?: EventLogger;
+  metrics?: Metrics;
+}
+
+/**
+ * Build the production CLI executor. Wraps {@link spawnCapped} with structured
+ * logging and metrics so each external CLI invocation leaves a trace: which
+ * executable ran, its exit code, how long it took, and whether it timed out or
+ * was truncated. Only the executable name and exit metadata are logged — never
+ * argv (which may carry secrets) or output.
+ */
+export function createCliExecutor(deps: CliExecutorDeps = {}): CliExecutor {
+  const { logger, metrics = noopMetrics } = deps;
+  return async (command: BuiltCommand): Promise<ExecutorResult> => {
+    const startedAt = process.hrtime.bigint();
+    const result = await spawnCapped(command.executable, command.argv, {
+      env: buildCliEnv(process.env),
+      maxOutputBytes: resolveMaxOutputBytes(process.env),
+      timeoutMs: resolveCliTimeoutMs(process.env)
+    });
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const timedOut = result.exitCode === TIMEOUT_EXIT_CODE;
+    const truncated =
+      result.exitCode === OUTPUT_LIMIT_EXIT_CODE && result.stderr.includes('output exceeded');
+
+    metrics.increment('cli_exec_total', { provider: command.provider, exitCode: result.exitCode });
+    metrics.observe('cli_duration_ms', durationMs, { provider: command.provider });
+    if (timedOut) {
+      metrics.increment('cli_timeout_total', { provider: command.provider });
+    }
+    if (truncated) {
+      metrics.increment('cli_truncated_total', { provider: command.provider });
+    }
+
+    logger?.info('cli.exec', {
+      provider: command.provider,
+      executable: command.executable,
+      exitCode: result.exitCode,
+      durationMs: Math.round(durationMs),
+      timedOut,
+      truncated
+    });
+    return result;
+  };
+}
+
+/** Default executor with no logging/metrics, for callers that don't wire them. */
+export const cliExecutor: CliExecutor = createCliExecutor();
 
 export async function checkExecutable(executable: string): Promise<boolean> {
   const result = await spawnCapped(executable, ['--help'], {

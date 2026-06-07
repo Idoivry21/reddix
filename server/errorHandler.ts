@@ -1,4 +1,6 @@
 import type { ErrorRequestHandler, NextFunction, Request, Response } from 'express';
+import { nanoid } from 'nanoid';
+import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
 
 interface ErrorLogger {
   error: (message: string, fields?: Record<string, unknown>) => void;
@@ -21,7 +23,13 @@ export function errorHandler(
     next(error);
     return;
   }
-  console.error('[reddix] unhandled request error:', error);
+  // Redact before logging: a CLI-originated error may echo an auth token in its
+  // message, and this fallback path does not go through the redacting logger.
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  console.error(
+    '[reddix] unhandled request error:',
+    redactSecrets(detail, buildSecretMap(process.env))
+  );
   response.status(500).json({ error: 'Internal server error' });
 }
 
@@ -35,10 +43,14 @@ export function createErrorHandler(logger: ErrorLogger): ErrorRequestHandler {
       next(error);
       return;
     }
+    // Correlate the client-facing 500 with the server log via a request id, so a
+    // user/support ticket can point straight at the matching log entry.
+    const requestId = nanoid();
     logger.error('request error', {
+      requestId,
       path: request.path,
       detail: error instanceof Error ? error.message : String(error)
     });
-    response.status(500).json({ error: 'Internal server error' });
+    response.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR', requestId });
   };
 }

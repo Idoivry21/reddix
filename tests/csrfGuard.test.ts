@@ -48,7 +48,10 @@ describe('csrfGuard middleware', () => {
   it('rejects a cross-site POST with 403 and does not call next', () => {
     const { status, json, next } = run('POST', 'cross-site');
     expect(status).toHaveBeenCalledWith(403);
-    expect(json).toHaveBeenCalledWith({ error: 'Forbidden: cross-site request rejected' });
+    expect(json).toHaveBeenCalledWith({
+      error: 'Forbidden: cross-site request rejected',
+      code: 'CROSS_SITE_BLOCKED'
+    });
     expect(next).not.toHaveBeenCalled();
   });
 
