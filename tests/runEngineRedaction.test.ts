@@ -90,6 +90,54 @@ describe('security invariant 2: secrets never leak from the run pipeline', () =>
     expect(JSON.stringify(run)).not.toContain(SECRET.slice(0, 10));
     expect(JSON.stringify(emitted)).not.toContain(SECRET.slice(0, 10));
   });
+
+  it('redacts secrets from stored and emitted argv values', async () => {
+    const emitted: RunStep[] = [];
+    const run = await runFlow({
+      flow: {
+        ...leakyFlow(),
+        nodes: [
+          {
+            id: 'twitter-search',
+            type: 'twitter.searchTweets',
+            settings: { query: `token ${SECRET}`, tab: 'latest', maxCount: 5 }
+          }
+        ],
+        edges: []
+      },
+      secrets: { TWITTER_AUTH_TOKEN: SECRET },
+      executor: async () => ({ stdout: '{"data":[]}', stderr: '', exitCode: 0 }),
+      writeArtifact: async (filePath, contents) => ({ path: filePath, bytes: contents.length }),
+      now: () => new Date('2026-06-06T10:00:00Z'),
+      emit: (event) => {
+        if (event.step) {
+          emitted.push(event.step);
+        }
+      }
+    });
+
+    expect(JSON.stringify(run.steps)).not.toContain(SECRET);
+    expect(JSON.stringify(emitted)).not.toContain(SECRET);
+    expect(run.steps[0].argv).toContain('token [REDACTED]');
+  });
+
+  it('redacts a secret echoed into an item body before it enters the run sample', async () => {
+    const run = await runFlow({
+      flow: leakyFlow(),
+      secrets: { TWITTER_AUTH_TOKEN: SECRET },
+      executor: async () => ({
+        stdout: JSON.stringify({ data: [{ id: 't1', text: `leak ${SECRET} here`, created_at: '2026-01-01T00:00:00Z' }] }),
+        stderr: '',
+        exitCode: 0
+      }),
+      writeArtifact: async (filePath, contents) => ({ path: filePath, bytes: contents.length }),
+      now: () => new Date('2026-06-06T10:00:00Z')
+    });
+
+    expect(run.sample?.length).toBeGreaterThan(0);
+    expect(JSON.stringify(run.sample)).not.toContain(SECRET);
+    expect(JSON.stringify(run.sample)).toContain('[REDACTED]');
+  });
 });
 
 function leakyFlow(): FlowDefinition {

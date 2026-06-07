@@ -1,12 +1,14 @@
 import path from 'node:path';
 import { createApp } from './app';
 import { validateEnv, summarizeAuthPresence } from './env';
+import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
 import { createStorage } from './storage';
 
 const { port, dataDir } = validateEnv(process.env);
 console.log(`[reddix] auth tokens: ${summarizeAuthPresence(process.env)}`);
 const storage = createStorage({ baseDir: dataDir });
 const staticDir = process.env.REDDIX_STATIC_DIR ?? path.join(process.cwd(), 'dist');
+const fatalLogSecrets = buildSecretMap(process.env);
 
 const { app, closeClients } = createApp({ storage, dataDir, staticDir });
 
@@ -40,11 +42,17 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 process.on('uncaughtException', (error) => {
-  console.error('[reddix] uncaughtException:', error);
+  console.error('[reddix] uncaughtException:', formatFatalReason(error));
   shutdown('uncaughtException', 1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[reddix] unhandledRejection:', reason);
+  console.error('[reddix] unhandledRejection:', formatFatalReason(reason));
   shutdown('unhandledRejection', 1);
 });
+
+function formatFatalReason(reason: unknown): string {
+  const message =
+    reason instanceof Error ? reason.stack ?? reason.message : typeof reason === 'string' ? reason : String(reason);
+  return redactSecrets(message, fatalLogSecrets);
+}

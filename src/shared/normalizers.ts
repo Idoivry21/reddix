@@ -29,23 +29,31 @@ export function normalizeRedditPayload(payload: unknown, sourceBlockId: string):
 export function normalizeTwitterPayload(payload: unknown, sourceBlockId: string): SocialItem[] {
   return extractArray(payload).map((raw) => {
     const body = stringValue(raw.text ?? raw.full_text ?? raw.body);
+    // twitter-cli nests counts under `metrics` and the author under `author.screenName`.
+    // Keep flat fallbacks so older/alternate payload shapes still normalize.
+    const metrics: RawRecord = isRecord(raw.metrics) ? raw.metrics : {};
+    const handle = stringValue(
+      raw.author?.screenName ?? raw.author?.handle ?? raw.author?.username ?? raw.username ?? raw.user
+    );
+    const id = stringValue(raw.id ?? raw.rest_id) ?? '';
     return {
       platform: 'twitter',
       sourceBlockId,
-      id: stringValue(raw.id ?? raw.rest_id) ?? '',
-      url: stringValue(raw.url ?? raw.permalink),
-      author: stringValue(raw.author?.handle ?? raw.author?.username ?? raw.username ?? raw.user),
+      id,
+      // twitter-cli items carry no direct permalink; derive one from handle + id.
+      url: stringValue(raw.url ?? raw.permalink) ?? tweetUrl(handle, id),
+      author: handle,
       community: stringValue(raw.list ?? raw.community) ?? null,
       title: null,
       body,
       text: collapseText([body]),
-      createdAt: toIsoDate(raw.created_at ?? raw.createdAt),
+      createdAt: toIsoDate(raw.createdAtISO ?? raw.created_at ?? raw.createdAt),
       engagement: {
-        replies: numberValue(raw.replies ?? raw.reply_count),
-        likes: numberValue(raw.likes ?? raw.favorite_count),
-        retweets: numberValue(raw.retweets ?? raw.retweet_count),
-        bookmarks: numberValue(raw.bookmarks ?? raw.bookmark_count),
-        views: numberValue(raw.views ?? raw.view_count)
+        replies: numberValue(metrics.replies ?? raw.replies ?? raw.reply_count),
+        likes: numberValue(metrics.likes ?? raw.likes ?? raw.favorite_count),
+        retweets: numberValue(metrics.retweets ?? raw.retweets ?? raw.retweet_count),
+        bookmarks: numberValue(metrics.bookmarks ?? raw.bookmarks ?? raw.bookmark_count),
+        views: numberValue(metrics.views ?? raw.views ?? raw.view_count)
       },
       media: extractMedia(raw),
       links: extractLinks(raw),
@@ -54,11 +62,21 @@ export function normalizeTwitterPayload(payload: unknown, sourceBlockId: string)
   });
 }
 
+function tweetUrl(handle: string | null, id: string): string | null {
+  return handle && id ? `https://x.com/${handle}/status/${id}` : null;
+}
+
 type RawRecord = Record<string, any>;
 
 function extractArray(payload: unknown): RawRecord[] {
   const value = payload as RawRecord;
-  const candidate = value?.data ?? value?.items ?? value?.results ?? value;
+  const data = value?.data ?? value?.items ?? value?.results ?? value;
+  // CLIs wrap results as `{ ok, data: [...] }`; some commands nest one level
+  // deeper (`data.posts` / `data.tweets`). Unwrap that level when present.
+  const candidate =
+    Array.isArray(data) || !isRecord(data)
+      ? data
+      : data.posts ?? data.tweets ?? data.results ?? data.items ?? data.children ?? data;
   if (Array.isArray(candidate)) {
     return candidate.filter(isRecord);
   }
@@ -85,12 +103,16 @@ function numberValue(value: unknown): number | null {
 
 function toIsoDate(value: unknown): string {
   if (typeof value === 'number') {
-    return new Date(value * 1000).toISOString();
+    return safeIsoDate(new Date(value * 1000));
   }
   if (typeof value === 'string' && value.trim()) {
-    return new Date(value).toISOString();
+    return safeIsoDate(new Date(value));
   }
   return new Date(0).toISOString();
+}
+
+function safeIsoDate(date: Date): string {
+  return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
 }
 
 function collapseText(values: Array<string | null>): string {
@@ -122,4 +144,3 @@ function extractMedia(raw: RawRecord): Array<{ type: string; url: string }> {
     .filter((entry) => isRecord(entry) && typeof entry.url === 'string')
     .map((entry) => ({ type: stringValue(entry.type) ?? 'unknown', url: entry.url }));
 }
-

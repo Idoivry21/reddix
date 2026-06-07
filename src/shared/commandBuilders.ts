@@ -1,5 +1,5 @@
 import { blockSpecs, blockSpecByType } from './blockSpecs';
-import type { BlockSpec, BuiltCommand, CommandBuildInput } from './types';
+import type { BlockSpec, BuiltCommand, CommandBuildInput, FieldSpec } from './types';
 
 export function listBlockSpecs(): BlockSpec[] {
   return blockSpecs;
@@ -18,6 +18,13 @@ export function getDefaultSettings(blockType: string): Record<string, unknown> {
 }
 
 export function buildBlockCommand(input: CommandBuildInput): BuiltCommand {
+  const errors = validateBlockSettings(input.blockType, input.settings, {
+    enforceRequired: false,
+    rejectFlagLikeStrings: true
+  });
+  if (errors.length) {
+    throw new Error(errors.join('; '));
+  }
   switch (input.blockType) {
     case 'reddit.searchPosts':
       return buildRedditSearch(input.settings);
@@ -48,17 +55,43 @@ export function buildBlockCommand(input: CommandBuildInput): BuiltCommand {
   }
 }
 
+interface ValidateSettingsOptions {
+  enforceRequired: boolean;
+  rejectFlagLikeStrings: boolean;
+}
+
+export function validateBlockSettings(
+  blockType: string,
+  settings: Record<string, unknown>,
+  options: ValidateSettingsOptions = { enforceRequired: true, rejectFlagLikeStrings: true }
+): string[] {
+  const spec = getBlockSpec(blockType);
+  const errors: string[] = [];
+  for (const field of spec.fields) {
+    const value = settings[field.key];
+    if (options.enforceRequired && field.required && isBlank(value)) {
+      errors.push(`${field.label} is required`);
+      continue;
+    }
+    if (isBlank(value)) {
+      continue;
+    }
+    errors.push(...validateFieldValue(spec, field, value, options));
+  }
+  return errors;
+}
+
 export function previewCommand(command: BuiltCommand): string {
   return [command.executable, ...command.displayArgv].map(formatArgForPreview).join(' ');
 }
 
 export function getProviderHealthCommands() {
   return [
-    { provider: 'reddit' as const, executable: 'rdt' as const, argv: ['auth', 'status', '--json'] },
+    { provider: 'reddit' as const, executable: 'rdt' as const, argv: ['status', '--json'] },
     {
       provider: 'twitter' as const,
       executable: 'twitter' as const,
-      argv: ['auth', 'status', '--json']
+      argv: ['status', '--json']
     }
   ];
 }
@@ -117,7 +150,7 @@ function buildTwitterSearch(settings: Record<string, unknown>): BuiltCommand {
   const argv = compact([
     'search',
     stringSetting(settings, 'query', 'CI automation'),
-    '--tab',
+    '--type',
     stringSetting(settings, 'tab', 'latest'),
     '--max',
     numberSetting(settings, 'maxCount', 100).toString(),
@@ -127,8 +160,10 @@ function buildTwitterSearch(settings: Record<string, unknown>): BuiltCommand {
     setting(settings, 'fromUser'),
     setting(settings, 'since') && '--since',
     setting(settings, 'since'),
-    boolSetting(settings, 'excludeRetweets') && '--exclude-retweets',
-    boolSetting(settings, 'hasLinks') && '--has-links',
+    // twitter-cli uses repeatable value options, not bare flags:
+    // `--exclude retweets`, `--has links` (not `--exclude-retweets`/`--has-links`).
+    ...(boolSetting(settings, 'excludeRetweets') ? ['--exclude', 'retweets'] : []),
+    ...(boolSetting(settings, 'hasLinks') ? ['--has', 'links'] : []),
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
@@ -138,12 +173,10 @@ function buildTwitterSearch(settings: Record<string, unknown>): BuiltCommand {
 function buildTwitterTimeline(settings: Record<string, unknown>): BuiltCommand {
   const argv = compact([
     'feed',
-    '--timeline',
+    '--type',
     stringSetting(settings, 'timeline', 'following'),
     '--max',
     numberSetting(settings, 'maxCount', 50).toString(),
-    setting(settings, 'cursor') && '--cursor',
-    setting(settings, 'cursor'),
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
@@ -177,8 +210,6 @@ function buildTwitterListTimeline(settings: Record<string, unknown>): BuiltComma
   const argv = compact([
     'list',
     stringSetting(settings, 'listId', ''),
-    setting(settings, 'cursor') && '--cursor',
-    setting(settings, 'cursor'),
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
@@ -228,6 +259,48 @@ function numberSetting(settings: Record<string, unknown>, key: string, fallback:
 
 function boolSetting(settings: Record<string, unknown>, key: string): boolean {
   return settings[key] === true;
+}
+
+function validateFieldValue(
+  spec: BlockSpec,
+  field: FieldSpec,
+  value: unknown,
+  options: ValidateSettingsOptions
+): string[] {
+  if (field.type === 'boolean') {
+    return typeof value === 'boolean' ? [] : [`${field.label} must be a boolean`];
+  }
+  if (field.type === 'number') {
+    const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    if (!Number.isFinite(numeric)) {
+      return [`${field.label} must be a number`];
+    }
+    if (field.min !== undefined && numeric < field.min) {
+      return [`${field.label} must be at least ${field.min}`];
+    }
+    if (field.max !== undefined && numeric > field.max) {
+      return [`${field.label} must be at most ${field.max}`];
+    }
+    return [];
+  }
+  if (field.type === 'select') {
+    const allowed = field.options?.map((option) => option.value) ?? [];
+    if (!allowed.some((allowedValue) => allowedValue === value)) {
+      return [`${field.label} must be one of: ${allowed.map(String).join(', ')}`];
+    }
+    return [];
+  }
+  if (typeof value !== 'string') {
+    return [`${field.label} must be text`];
+  }
+  if (options.rejectFlagLikeStrings && spec.command && value.trim().startsWith('-')) {
+    return [`${field.label} cannot start with "-"`];
+  }
+  return [];
+}
+
+function isBlank(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
 }
 
 function compact(values: Array<string | false | undefined>): string[] {

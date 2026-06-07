@@ -9,15 +9,17 @@ interface FakeResponse {
   status: number;
   ended: boolean;
   failOnWriteAfter: number | null;
+  writeResult: boolean;
 }
 
-function fakeResponse(failOnWriteAfter: number | null = null): FakeResponse {
+function fakeResponse(failOnWriteAfter: number | null = null, writeResult = true): FakeResponse {
   const state: FakeResponse = {
     writes: [],
     headers: null,
     status: 200,
     ended: false,
     failOnWriteAfter,
+    writeResult,
     response: undefined as unknown as Response
   };
   const handlers: Record<string, () => void> = {};
@@ -32,7 +34,7 @@ function fakeResponse(failOnWriteAfter: number | null = null): FakeResponse {
         throw new Error('client gone');
       }
       state.writes.push(chunk);
-      return true;
+      return state.writeResult;
     },
     status(code: number) {
       state.status = code;
@@ -90,6 +92,34 @@ describe('createSseHub', () => {
     expect(hub.clientCount).toBe(1);
     expect(bad.ended).toBe(true);
     expect(good.writes.join('')).toContain('run-step');
+  });
+
+  it('drops a client when response.write signals backpressure', () => {
+    const hub = createSseHub();
+    const slow = fakeResponse(null, false);
+
+    hub.handler(fakeRequest(), slow.response, vi.fn());
+
+    expect(hub.clientCount).toBe(0);
+    expect(slow.ended).toBe(true);
+  });
+
+  it('drops idle clients that never close cleanly', () => {
+    vi.useFakeTimers();
+    try {
+      const hub = createSseHub({ heartbeatMs: 100, idleTimeoutMs: 250 });
+      const res = fakeResponse();
+      hub.handler(fakeRequest(), res.response, vi.fn());
+      expect(hub.clientCount).toBe(1);
+
+      vi.advanceTimersByTime(251);
+
+      expect(hub.clientCount).toBe(0);
+      expect(res.ended).toBe(true);
+      hub.closeAll();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects connections beyond the max client cap', () => {

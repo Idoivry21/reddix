@@ -1,8 +1,11 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdir, open, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
+import { nanoid } from 'nanoid';
 import { listBlockSpecs } from '../src/shared/commandBuilders';
 import { getProviderHealthCommands } from '../src/shared/commandBuilders';
+import { validateFlow } from '../src/shared/graph';
 import { buildSecretMap } from '../src/shared/redaction';
 import { MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
 import { checkExecutable, cliExecutor } from './executor';
@@ -12,18 +15,20 @@ import { createScheduler } from './scheduler';
 import { formatZodError, parseFlowPutBody, parseRunPostBody } from './schemas';
 import { isSafeId, resolveContainedPath } from './safeId';
 import { createSseHub } from './sseHub';
-import type { PersistedFlow, RunRecord } from './types';
+import type { CliExecutor, PersistedFlow, RunRecord } from './types';
 
 interface RoutesOptions {
   storage: ReturnType<typeof import('./storage').createStorage>;
   dataDir: string;
   /** Minimum gap between manual /runs triggers per flow (ms). */
   runMinIntervalMs?: number;
+  executor?: CliExecutor;
 }
 
 export function createRoutes(options: RoutesOptions) {
   const router = express.Router();
   const sse = createSseHub();
+  const executor = options.executor ?? cliExecutor;
   // Throttle the subprocess-spawning /runs route per flow to protect accounts
   // and the host from rapid repeated triggers.
   const runRateLimiter = createRateLimiter({
@@ -34,10 +39,13 @@ export function createRoutes(options: RoutesOptions) {
     minIntervalMs: MIN_SCHEDULE_INTERVAL_MS,
     jitterMs: 30 * 1000,
     runFlow: async (flowId) => {
-      await runAndStore(flowId);
+      return runAndStore(flowId);
     },
     onSkip: async (flowId) => {
-      await options.storage.appendRun(skippedRun(flowId));
+      const run = skippedRun(flowId);
+      await options.storage.appendRun(run);
+      sse.broadcast('run-complete', { run });
+      return run;
     }
   });
 
@@ -56,10 +64,15 @@ export function createRoutes(options: RoutesOptions) {
 
   // Restore persisted schedules at startup, then start the timer.
   void (async () => {
-    for (const flow of await options.storage.listFlows()) {
-      syncSchedule(flow);
+    try {
+      for (const flow of await options.storage.listFlows()) {
+        syncSchedule(flow);
+      }
+    } catch (error) {
+      console.error('[reddix] failed to restore schedules:', error);
+    } finally {
+      scheduler.start();
     }
-    scheduler.start();
   })();
 
   router.get('/health', async (_request, response) => {
@@ -75,6 +88,54 @@ export function createRoutes(options: RoutesOptions) {
 
   router.get('/blocks', (_request, response) => {
     response.json({ blocks: listBlockSpecs() });
+  });
+
+  // Read-only serve for run artifacts (HTML reports, JSON/CSV/MD exports) under
+  // <dataDir>/artifacts. GET only; csrfGuard only blocks mutating verbs.
+  const artifactsDir = path.join(options.dataDir, 'artifacts');
+  router.get('/artifacts/*splat', async (request, response) => {
+    const splat = (request.params as Record<string, unknown>).splat;
+    const relPath = Array.isArray(splat) ? splat.join('/') : typeof splat === 'string' ? splat : '';
+    let safePath: string;
+    try {
+      // Rejects `..`/absolute paths that would escape the artifacts directory.
+      safePath = resolveContainedPath(artifactsDir, relPath);
+    } catch {
+      response.status(400).json({ error: 'Invalid artifact path' });
+      return;
+    }
+    try {
+      // resolveContainedPath only blocks lexical traversal. Re-check the REAL
+      // path so a symlink planted inside the artifacts dir cannot point out of
+      // it. Both sides are realpath'd so a symlinked base (e.g. macOS /var →
+      // /private/var) does not produce a false rejection.
+      const realBase = await realpath(artifactsDir);
+      const realPath = await realpath(safePath);
+      if (realPath !== realBase && !realPath.startsWith(realBase + path.sep)) {
+        response.status(404).json({ error: 'Artifact not found' });
+        return;
+      }
+      const handle = await open(realPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const contents = await handle.readFile().finally(() => handle.close());
+      // Defense in depth: artifacts embed untrusted fetched content and are
+      // served same-origin. nosniff stops content-type confusion; the CSP keeps
+      // the report's own inline style/script working while blocking exfiltration
+      // (connect/form/frame) should escaping ever regress.
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      response.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+      );
+      response.type(artifactContentType(realPath));
+      response.send(contents);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'EISDIR' || code === 'ELOOP') {
+        response.status(404).json({ error: 'Artifact not found' });
+        return;
+      }
+      throw error;
+    }
   });
 
   router.get('/flows', async (_request, response) => {
@@ -119,6 +180,13 @@ export function createRoutes(options: RoutesOptions) {
       createdAt: incoming.createdAt ?? now,
       updatedAt: now
     };
+    const validation = validateFlow(flow);
+    if (!validation.valid) {
+      response.status(400).json({
+        error: `Invalid flow graph: ${validation.errors.map((error) => `${error.nodeId}: ${error.message}`).join('; ')}`
+      });
+      return;
+    }
     await options.storage.saveFlow(flow);
     syncSchedule(flow);
     response.json({ flow });
@@ -142,7 +210,7 @@ export function createRoutes(options: RoutesOptions) {
       response.status(429).json({ error: 'Too many runs for this flow; please wait before retrying' });
       return;
     }
-    const run = await runAndStore(parsed.data.flowId);
+    const run = (await scheduler.triggerNow(parsed.data.flowId)) as RunRecord;
     response.status(run.status === 'failed' ? 422 : 200).json({ run });
   });
 
@@ -151,14 +219,24 @@ export function createRoutes(options: RoutesOptions) {
       response.status(400).json({ error: 'Invalid flow id' });
       return;
     }
-    // Same per-flow gate as /runs: single-flight stops overlap, but this still
-    // spawns a subprocess, so rate-limit it too.
-    if (!runRateLimiter.tryAcquire(request.params.flowId)) {
-      response.status(429).json({ error: 'Too many runs for this flow; please wait before retrying' });
+    const flow = await options.storage.getFlow(request.params.flowId);
+    if (!flow) {
+      response.status(404).json({ error: 'Flow not found' });
       return;
     }
-    await scheduler.triggerNow(request.params.flowId);
-    response.json({ ok: true });
+    if (!flow.schedule?.enabled || scheduler.getNextRunAt(flow.id) === null) {
+      syncSchedule(flow);
+    }
+    const result = await scheduler.triggerDue(request.params.flowId);
+    if (!result.triggered) {
+      response.status(429).json({
+        error: 'Schedule is not due yet',
+        nextRunAt: result.nextRunAt ? new Date(result.nextRunAt).toISOString() : null
+      });
+      return;
+    }
+    const run = result.result as RunRecord;
+    response.status(run.status === 'failed' ? 422 : 200).json({ run });
   });
 
   async function runAndStore(flowId: string): Promise<RunRecord> {
@@ -170,7 +248,7 @@ export function createRoutes(options: RoutesOptions) {
     }
     const run = await runFlow({
       flow,
-      executor: cliExecutor,
+      executor,
       secrets: buildSecretMap(process.env),
       writeArtifact: writeArtifact(options.dataDir),
       emit: (event) => sse.broadcast('run-step', event)
@@ -201,6 +279,22 @@ function flowProviders(flow: PersistedFlow): string[] {
   return [...providers];
 }
 
+/** Map an artifact's extension to a response content type; default text/plain. */
+function artifactContentType(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case '.html':
+      return 'text/html; charset=utf-8';
+    case '.json':
+      return 'application/json; charset=utf-8';
+    case '.csv':
+      return 'text/csv; charset=utf-8';
+    case '.md':
+      return 'text/markdown; charset=utf-8';
+    default:
+      return 'text/plain; charset=utf-8';
+  }
+}
+
 function writeArtifact(dataDir: string) {
   const artifactsDir = path.join(dataDir, 'artifacts');
   return async (filePath: string, contents: string): Promise<{ path: string; bytes: number }> => {
@@ -215,7 +309,7 @@ function failedRun(flowId: string, error: string): RunRecord {
   const now = new Date().toISOString();
   return {
     schemaVersion: 1,
-    id: `failed-${Date.now()}`,
+    id: `failed-${nanoid()}`,
     flowId,
     status: 'failed',
     startedAt: now,
@@ -230,7 +324,7 @@ function skippedRun(flowId: string): RunRecord {
   const now = new Date().toISOString();
   return {
     schemaVersion: 1,
-    id: `skipped-${Date.now()}`,
+    id: `skipped-${nanoid()}`,
     flowId,
     status: 'skipped',
     startedAt: now,

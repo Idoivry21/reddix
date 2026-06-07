@@ -47,9 +47,12 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
             <div className="ei-icon">
               <CubeIcon />
             </div>
-            <div className="ei-title">No block selected</div>
+            <div className="ei-title">Pick a block to tune it</div>
             <div className="ei-sub">
               Select a block on the canvas to configure its settings and preview the command it runs.
+            </div>
+            <div className="ei-hint">
+              Tip: press <kbd>⌘K</kbd> to search blocks
             </div>
           </div>
         </div>
@@ -60,7 +63,14 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
   const spec = getBlockSpec(node.blockType);
   const accent = accentForBlock(spec.provider, spec.category);
   const fields = spec.fields;
-  const command = spec.command ? buildBlockCommand({ blockId: node.id, blockType: node.blockType, settings: node.settings }) : null;
+  let command: BuiltCommand | null = null;
+  if (spec.command) {
+    try {
+      command = buildBlockCommand({ blockId: node.id, blockType: node.blockType, settings: node.settings });
+    } catch {
+      command = null;
+    }
+  }
 
   return (
     <aside className="inspector" aria-label="Inspector">

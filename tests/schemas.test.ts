@@ -43,6 +43,39 @@ describe('parseFlowPutBody', () => {
     expect(parseFlowPutBody({ flow: { nodes: 'not-array' } }).success).toBe(false);
   });
 
+  it('rejects overlong node and edge ids', () => {
+    const longId = 'x'.repeat(201);
+
+    expect(
+      parseFlowPutBody({ flow: { nodes: [{ id: longId, type: 'utility.note', settings: {} }] } }).success
+    ).toBe(false);
+    expect(
+      parseFlowPutBody({
+        flow: {
+          edges: [{ id: longId, source: 'a', target: 'b', sourcePortId: 'out', targetPortId: 'in' }]
+        }
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects excessive node and edge counts', () => {
+    const nodes = Array.from({ length: 501 }, (_unused, index) => ({
+      id: `n-${index}`,
+      type: 'utility.note',
+      settings: {}
+    }));
+    const edges = Array.from({ length: 1001 }, (_unused, index) => ({
+      id: `e-${index}`,
+      source: 'a',
+      target: 'b',
+      sourcePortId: 'out',
+      targetPortId: 'in'
+    }));
+
+    expect(parseFlowPutBody({ flow: { nodes } }).success).toBe(false);
+    expect(parseFlowPutBody({ flow: { edges } }).success).toBe(false);
+  });
+
   it('rejects malformed edges', () => {
     expect(
       parseFlowPutBody({ flow: { edges: [{ id: 'e1', source: 'n1' }] } }).success

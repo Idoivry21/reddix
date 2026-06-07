@@ -1,8 +1,13 @@
-import type { BlockSpec } from './types';
+import type { BlockSpec, FieldOption } from './types';
 
 const socialArrayPort = { id: 'items', label: 'Items', type: 'SocialItem[]' as const };
 const detailPort = { id: 'detail', label: 'Detail', type: 'DetailObject' as const };
 const artifactPort = { id: 'artifact', label: 'Artifact', type: 'FileArtifact' as const };
+const redditSortOptions = options(['hot', 'new', 'top', 'rising', 'controversial']);
+const redditSearchSortOptions = options(['relevance', 'hot', 'top', 'new', 'comments']);
+const redditTimeRangeOptions = options(['hour', 'day', 'week', 'month', 'year', 'all']);
+const twitterSearchTabOptions = options(['latest', 'top', 'media']);
+const twitterTimelineOptions = options(['following', 'for-you']);
 
 export const blockSpecs: BlockSpec[] = [
   {
@@ -21,19 +26,13 @@ export const blockSpecs: BlockSpec[] = [
         key: 'sort',
         label: 'Sort',
         type: 'select',
-        options: ['relevance', 'hot', 'top', 'new', 'comments'].map((value) => ({
-          label: value,
-          value
-        }))
+        options: redditSearchSortOptions
       },
       {
         key: 'timeRange',
         label: 'Time Range',
         type: 'select',
-        options: ['hour', 'day', 'week', 'month', 'year', 'all'].map((value) => ({
-          label: value,
-          value
-        }))
+        options: redditTimeRangeOptions
       },
       { key: 'limit', label: 'Limit', type: 'number', min: 1, max: 1000 }
     ],
@@ -56,8 +55,8 @@ export const blockSpecs: BlockSpec[] = [
     command: { executable: 'rdt' },
     fields: [
       { key: 'subreddit', label: 'Subreddit', type: 'text', required: true },
-      { key: 'sort', label: 'Sort', type: 'select' },
-      { key: 'timeRange', label: 'Time Range', type: 'select' },
+      { key: 'sort', label: 'Sort', type: 'select', options: redditSortOptions },
+      { key: 'timeRange', label: 'Time Range', type: 'select', options: redditTimeRangeOptions },
       { key: 'limit', label: 'Limit', type: 'number', min: 1, max: 1000 }
     ],
     defaultSettings: { subreddit: 'localdev', sort: 'hot', timeRange: 'day', limit: 50 }
@@ -72,7 +71,7 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     command: { executable: 'rdt' },
     fields: [
-      { key: 'listing', label: 'Listing', type: 'select' },
+      { key: 'listing', label: 'Listing', type: 'select', options: options(['popular', 'all']) },
       { key: 'limit', label: 'Limit', type: 'number', min: 1, max: 1000 }
     ],
     defaultSettings: { listing: 'popular', limit: 50 }
@@ -103,7 +102,7 @@ export const blockSpecs: BlockSpec[] = [
     command: { executable: 'twitter' },
     fields: [
       { key: 'query', label: 'Query', type: 'text', required: true },
-      { key: 'tab', label: 'Tab', type: 'select' },
+      { key: 'tab', label: 'Tab', type: 'select', options: twitterSearchTabOptions },
       { key: 'maxCount', label: 'Max Count', type: 'number', min: 1, max: 1000 },
       { key: 'language', label: 'Language', type: 'text' },
       { key: 'fromUser', label: 'From User', type: 'text' },
@@ -134,12 +133,11 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     command: { executable: 'twitter' },
     fields: [
-      { key: 'timeline', label: 'Timeline', type: 'select' },
+      { key: 'timeline', label: 'Timeline', type: 'select', options: twitterTimelineOptions },
       { key: 'maxCount', label: 'Max Count', type: 'number', min: 1, max: 1000 },
-      { key: 'cursor', label: 'Cursor', type: 'text' },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
-    defaultSettings: { timeline: 'following', maxCount: 50, cursor: '', fullText: true }
+    defaultSettings: { timeline: 'following', maxCount: 50, fullText: true }
   },
   {
     type: 'twitter.bookmarks',
@@ -183,10 +181,9 @@ export const blockSpecs: BlockSpec[] = [
     command: { executable: 'twitter' },
     fields: [
       { key: 'listId', label: 'List ID', type: 'text', required: true },
-      { key: 'cursor', label: 'Cursor', type: 'text' },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
-    defaultSettings: { listId: '', cursor: '', fullText: true }
+    defaultSettings: { listId: '', fullText: true }
   },
   {
     type: 'twitter.tweetDetail',
@@ -226,7 +223,7 @@ export const blockSpecs: BlockSpec[] = [
     command: { executable: 'twitter' },
     fields: [
       { key: 'articleIdOrUrl', label: 'Article ID or URL', type: 'text', required: true },
-      { key: 'format', label: 'Format', type: 'select' }
+      { key: 'format', label: 'Format', type: 'select', options: options(['json', 'markdown']) }
     ],
     defaultSettings: { articleIdOrUrl: '', format: 'json' }
   },
@@ -278,7 +275,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Sort normalized social items.',
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
-    fields: [{ key: 'field', label: 'Field', type: 'select' }],
+    fields: [{ key: 'field', label: 'Field', type: 'select', options: options(['createdAt', 'score', 'comments', 'likes', 'retweets', 'views']) }],
     defaultSettings: { field: 'createdAt' }
   },
   {
@@ -304,7 +301,7 @@ export const blockSpecs: BlockSpec[] = [
       { key: 'path', label: 'Path', type: 'path', required: true },
       { key: 'pretty', label: 'Pretty Print', type: 'boolean' }
     ],
-    defaultSettings: { path: 'outputs/reddit.json', pretty: true }
+    defaultSettings: { path: 'outputs/research.json', pretty: true }
   },
   {
     type: 'output.exportCsv',
@@ -315,7 +312,7 @@ export const blockSpecs: BlockSpec[] = [
     description: 'Write normalized results to CSV.',
     ports: { input: [socialArrayPort], output: [artifactPort] },
     fields: [{ key: 'path', label: 'Path', type: 'path', required: true }],
-    defaultSettings: { path: 'outputs/tweets.csv' }
+    defaultSettings: { path: 'outputs/research.csv' }
   },
   {
     type: 'output.exportMarkdown',
@@ -327,6 +324,17 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [socialArrayPort], output: [artifactPort] },
     fields: [{ key: 'path', label: 'Path', type: 'path', required: true }],
     defaultSettings: { path: 'outputs/research.md' }
+  },
+  {
+    type: 'output.exportHtml',
+    label: 'Export HTML Report',
+    provider: 'local',
+    category: 'Output',
+    priority: 'P1',
+    description: 'Write a styled, self-contained HTML report of results.',
+    ports: { input: [socialArrayPort], output: [artifactPort] },
+    fields: [{ key: 'path', label: 'Path', type: 'path', required: true }],
+    defaultSettings: { path: 'outputs/report.html' }
   },
   {
     type: 'utility.note',
@@ -343,3 +351,6 @@ export const blockSpecs: BlockSpec[] = [
 
 export const blockSpecByType = new Map(blockSpecs.map((spec) => [spec.type, spec]));
 
+function options(values: string[]): FieldOption[] {
+  return values.map((value) => ({ label: value, value }));
+}

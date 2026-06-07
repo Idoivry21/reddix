@@ -80,10 +80,10 @@ function csvCell(value: unknown): string {
   if (value === undefined || value === null) {
     return '';
   }
-  const text = String(value);
+  const raw = String(value);
+  const text = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
   if (/[",\n]/.test(text)) {
     return `"${text.replace(/"/g, '""')}"`;
   }
   return text;
 }
-

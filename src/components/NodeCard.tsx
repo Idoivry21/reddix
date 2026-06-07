@@ -72,6 +72,8 @@ export function NodeCard({ node, selected, onMeasure, onSelect }: NodeCardProps)
           data-role="port-in"
           data-node={node.id}
           data-port={port.id}
+          tabIndex={0}
+          aria-label={`${node.label} input port: ${port.label}`}
           style={{ top: `${portFrac(index, inN) * 100}%` }}
         />
       ))}
@@ -82,6 +84,8 @@ export function NodeCard({ node, selected, onMeasure, onSelect }: NodeCardProps)
           data-role="port-out"
           data-node={node.id}
           data-port={port.id}
+          tabIndex={0}
+          aria-label={`${node.label} output port: ${port.label}`}
           style={{ top: `${portFrac(index, outN) * 100}%` }}
         />
       ))}

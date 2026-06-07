@@ -2,6 +2,18 @@ import { expect, test } from '@playwright/test';
 
 const isMobile = (name: string): boolean => name.includes('mobile');
 
+// Skip the first-run welcome overlay so the tests exercise the workbench itself.
+// The overlay has dedicated unit coverage (useOnboarding / WelcomeOverlay).
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      window.localStorage.setItem('reddix-onboarded', '1');
+    } catch {
+      /* localStorage may be unavailable; the overlay is non-fatal either way */
+    }
+  });
+});
+
 test('renders the canvas workbench', async ({ page }) => {
   await page.goto('/');
 
@@ -17,7 +29,7 @@ test('switches console tabs to the empty Output Preview', async ({ page }, testI
   await expect(page.getByText(/command preview/i)).toBeVisible();
   // Output Preview starts empty until a flow runs with an export block.
   await page.getByRole('tab', { name: 'Output Preview' }).click();
-  await expect(page.getByText(/No output rows/i)).toBeVisible();
+  await expect(page.getByText(/No rows yet/i)).toBeVisible();
 });
 
 test('adds a block to the canvas with the keyboard', async ({ page }, testInfo) => {

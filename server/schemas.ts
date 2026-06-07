@@ -2,19 +2,22 @@ import { z } from 'zod';
 import { isSafeId } from './safeId';
 
 const safeIdSchema = z.string().refine(isSafeId, { message: 'Invalid id' });
+const localIdSchema = z.string().min(1).max(200);
+const MAX_FLOW_NODES = 500;
+const MAX_FLOW_EDGES = 1000;
 
 const nodeSchema = z.object({
-  id: z.string().min(1),
+  id: localIdSchema,
   type: z.string().min(1),
   settings: z.record(z.unknown()).default({})
 });
 
 const edgeSchema = z.object({
-  id: z.string().min(1),
-  source: z.string().min(1),
-  target: z.string().min(1),
-  sourcePortId: z.string().min(1),
-  targetPortId: z.string().min(1)
+  id: localIdSchema,
+  source: localIdSchema,
+  target: localIdSchema,
+  sourcePortId: localIdSchema,
+  targetPortId: localIdSchema
 });
 
 const positionSchema = z.object({ x: z.number(), y: z.number() });
@@ -29,8 +32,8 @@ const scheduleSchema = z.object({
 const flowSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   failFast: z.boolean().optional(),
-  nodes: z.array(nodeSchema).default([]),
-  edges: z.array(edgeSchema).default([]),
+  nodes: z.array(nodeSchema).max(MAX_FLOW_NODES).default([]),
+  edges: z.array(edgeSchema).max(MAX_FLOW_EDGES).default([]),
   nodePositions: z.record(positionSchema).default({}),
   blockSettings: z.record(z.record(z.unknown())).default({}),
   schedule: scheduleSchema.default({ enabled: false }),

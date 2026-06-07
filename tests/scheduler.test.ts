@@ -41,6 +41,34 @@ describe('scheduler single-flight', () => {
 
     expect(skipped).toEqual(['flow-1']);
   });
+
+  it('caps concurrent runs across different flows', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    const scheduler = createScheduler({
+      minIntervalMs: MIN,
+      jitterMs: 0,
+      maxConcurrentRuns: 1,
+      onSkip: async () => {},
+      runFlow: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        active -= 1;
+      }
+    });
+
+    const first = scheduler.triggerNow('flow-1');
+    const second = scheduler.triggerNow('flow-2');
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases.shift()?.();
+    await Promise.all([first, second]);
+
+    expect(maxActive).toBe(1);
+  });
 });
 
 describe('scheduler due calculation', () => {
@@ -73,6 +101,31 @@ describe('scheduler due calculation', () => {
     clock.advance(MIN);
     await scheduler.tick();
     expect(runFlow).toHaveBeenCalledTimes(2);
+  });
+
+  it('supports due-only manual triggering for scheduled flows', async () => {
+    const clock = fixedClock(0);
+    const runFlow = vi.fn(async () => 'ran');
+    const scheduler = createScheduler({
+      minIntervalMs: MIN,
+      jitterMs: 0,
+      now: clock.now,
+      random: () => 0,
+      runFlow,
+      onSkip: async () => 'skipped'
+    });
+
+    scheduler.register('flow-1', { intervalMs: MIN, enabled: true, providers: [] });
+
+    expect(await scheduler.triggerDue('flow-1')).toEqual({ triggered: false, nextRunAt: MIN });
+    expect(runFlow).not.toHaveBeenCalled();
+
+    clock.set(MIN);
+    expect(await scheduler.triggerDue('flow-1')).toEqual({
+      triggered: true,
+      result: 'ran',
+      nextRunAt: MIN * 2
+    });
   });
 
   it('does not fire paused or disabled schedules', async () => {

@@ -30,6 +30,8 @@ export interface ConsoleState {
   results: Array<Record<string, string | number | null>>;
   history: ConsoleHistoryEntry[];
   runLabel: string;
+  /** Relative artifact path of the most recent HTML report, if a run produced one. */
+  reportPath?: string;
 }
 
 export interface ProviderHealth {
@@ -92,12 +94,26 @@ export async function postRun(flowId: string): Promise<RunRecord> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ flowId })
   });
-  const payload = (await response.json()) as { run?: RunRecord };
+  let payload: { run?: RunRecord };
+  try {
+    payload = (await response.json()) as { run?: RunRecord };
+  } catch {
+    throw new Error(`Run failed (status ${response.status})`);
+  }
   // A 422 still carries a failed RunRecord; only a missing body is a real error.
   if (!payload.run) {
     throw new Error(`Run failed (status ${response.status})`);
   }
   return payload.run;
+}
+
+export async function listRuns(flowId: string): Promise<RunRecord[]> {
+  const response = await fetch(`/api/runs/${flowId}`);
+  if (!response.ok) {
+    throw new Error(`Failed to list runs (status ${response.status})`);
+  }
+  const payload = (await response.json()) as { runs?: RunRecord[] };
+  return payload.runs ?? [];
 }
 
 export interface RunStepEvent {
@@ -129,10 +145,20 @@ export function subscribeRunEvents(
   const source = factory('/events');
 
   source.addEventListener('run-step', (event) => {
-    handlers.onStep?.(parseEventData<RunStepEvent>((event as MessageEvent).data));
+    const parsed = parseEventData<RunStepEvent>((event as MessageEvent).data);
+    if (parsed) {
+      handlers.onStep?.(parsed);
+    } else {
+      handlers.onError?.();
+    }
   });
   source.addEventListener('run-complete', (event) => {
-    handlers.onComplete?.(parseEventData<RunCompleteEvent>((event as MessageEvent).data));
+    const parsed = parseEventData<RunCompleteEvent>((event as MessageEvent).data);
+    if (parsed) {
+      handlers.onComplete?.(parsed);
+    } else {
+      handlers.onError?.();
+    }
   });
   source.addEventListener('error', () => {
     handlers.onError?.();
@@ -141,6 +167,10 @@ export function subscribeRunEvents(
   return () => source.close();
 }
 
-function parseEventData<T>(data: string): T {
-  return JSON.parse(data) as T;
+function parseEventData<T>(data: string): T | null {
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
 }

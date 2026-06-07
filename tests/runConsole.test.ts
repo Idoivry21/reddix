@@ -54,11 +54,47 @@ describe('runRecordToConsoleState', () => {
     expect(state.steps[1]).toMatchObject({ id: 'export', status: 'failed' });
   });
 
+  it('maps the run sample into output-preview result rows', () => {
+    const withSample: RunRecord = {
+      ...run,
+      sample: [
+        { kind: 'reddit', id: 'p1', title: 'Hello', author: 'bob', score: 12, created: '2026-06-06T15:00:00.000Z', url: 'https://example.com/p1' }
+      ]
+    };
+    const state = runRecordToConsoleState(withSample, prev, nodeTypeById);
+
+    expect(state.results).toHaveLength(1);
+    expect(state.results[0]).toMatchObject({ kind: 'reddit', title: 'Hello', score: 12, url: 'https://example.com/p1' });
+  });
+
+  it('leaves results empty when the run carries no sample', () => {
+    const state = runRecordToConsoleState(run, prev, nodeTypeById);
+    expect(state.results).toEqual([]);
+  });
+
   it('summarizes output files and step errors in logs', () => {
     const state = runRecordToConsoleState(run, prev, nodeTypeById);
 
     expect(state.logs.some((log) => log.includes('outputs/export.json'))).toBe(true);
     expect(state.logs.some((log) => log.includes('disk full'))).toBe(true);
+  });
+
+  it('leaves reportPath undefined when no HTML report was produced', () => {
+    const state = runRecordToConsoleState(run, prev, nodeTypeById);
+    expect(state.reportPath).toBeUndefined();
+  });
+
+  it('sets reportPath to the most recent HTML output file', () => {
+    const withReports: RunRecord = {
+      ...run,
+      outputFiles: [
+        { path: 'outputs/export.json', bytes: 2048 },
+        { path: 'outputs/report-20260601-100000.html', bytes: 4096 },
+        { path: 'outputs/report-20260601-110000.html', bytes: 8192 }
+      ]
+    };
+    const state = runRecordToConsoleState(withReports, prev, nodeTypeById);
+    expect(state.reportPath).toBe('outputs/report-20260601-110000.html');
   });
 
   it('preserves the selected command and switches to the Logs tab', () => {

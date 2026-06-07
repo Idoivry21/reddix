@@ -2,12 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeCard } from './NodeCard';
 import { getBlockSpec } from '../shared/commandBuilders';
 import { canConnect } from '../shared/graph';
+import { accentForBlock } from '../blockVisuals';
 import { edgePath, nodePorts, type PortPoint } from '../canvasGeometry';
 import type { CanvasView, NodeSize, WorkbenchEdge, WorkbenchNode } from '../flowTypes';
 
 const BLOCK_DRAG_MIME = 'application/reddix-block';
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2;
+const GRID_SPACING = 22;
+const VIEW_ANIM_MS = 300;
+
+// Category accent hexes (theme-stable: the base accents don't flip in dark mode)
+// used to build per-edge source→target gradients.
+const ACCENT_HEX: Record<string, string> = {
+  reddit: '#ff4500',
+  x: '#1b8fe0',
+  transform: '#6e56cf',
+  output: '#1e9e6a',
+  utility: '#8a8577'
+};
+const ACCENT_KEYS = Object.keys(ACCENT_HEX);
 
 interface CanvasProps {
   nodes: WorkbenchNode[];
@@ -26,6 +40,7 @@ interface CanvasProps {
   onDropBlock: (blockType: string, x: number, y: number) => void;
   onPaneClick: () => void;
   onFit: () => void;
+  onAddBlock: (blockType: string) => void;
   dragType: string | null;
   readOnly?: boolean;
 }
@@ -60,11 +75,13 @@ export function Canvas(props: CanvasProps) {
     onDropBlock,
     onPaneClick,
     onFit,
+    onAddBlock,
     dragType,
     readOnly = false
   } = props;
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const panRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<DragState | null>(null);
   const [temp, setTemp] = useState<TempWire | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -235,8 +252,46 @@ export function Canvas(props: CanvasProps) {
     [dragType, onDropBlock, readOnly, toCanvas]
   );
 
+  // Briefly enable a CSS transition on the pan layer for programmatic view
+  // changes (fit, toolbar zoom). Live drag/wheel never call this, so they stay 1:1.
+  const animateView = useCallback((): void => {
+    const el = panRef.current;
+    if (!el) {
+      return;
+    }
+    el.classList.add('is-animating');
+    window.setTimeout(() => el.classList.remove('is-animating'), VIEW_ANIM_MS);
+  }, []);
+
+  const zoomToCenter = useCallback(
+    (factor: number): void => {
+      const rect = wrapRef.current?.getBoundingClientRect();
+      const cx = rect ? rect.width / 2 : 0;
+      const cy = rect ? rect.height / 2 : 0;
+      animateView();
+      setView((current) => {
+        const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.k * factor));
+        const ratio = k / current.k;
+        return { k, x: cx - (cx - current.x) * ratio, y: cy - (cy - current.y) * ratio };
+      });
+    },
+    [animateView, setView]
+  );
+
   const nodeStatusById = useMemo(
     () => Object.fromEntries(nodes.map((node) => [node.id, node.status])),
+    [nodes]
+  );
+
+  // Accent bucket per node, used to colour each edge with a source→target gradient.
+  const accentById = useMemo(
+    () =>
+      Object.fromEntries(
+        nodes.map((node) => {
+          const spec = getBlockSpec(node.blockType);
+          return [node.id, accentForBlock(spec.provider, spec.category)];
+        })
+      ) as Record<string, string>,
     [nodes]
   );
 
@@ -260,6 +315,10 @@ export function Canvas(props: CanvasProps) {
       aria-label="Flow canvas"
       data-grid="dots"
       data-connecting={connecting ? 'true' : 'false'}
+      style={{
+        backgroundPosition: `${view.x}px ${view.y}px`,
+        backgroundSize: `${GRID_SPACING * view.k}px ${GRID_SPACING * view.k}px`
+      }}
       onPointerDown={onPointerDown}
       onDragOver={(event) => {
         if (dragType) {
@@ -268,8 +327,18 @@ export function Canvas(props: CanvasProps) {
       }}
       onDrop={onDrop}
     >
-      <div className="canvas-pan" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+      <div ref={panRef} className="canvas-pan" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
         <svg className="edges-svg" style={{ left: -4000, top: -4000 }}>
+          <defs>
+            {ACCENT_KEYS.flatMap((src) =>
+              ACCENT_KEYS.map((tgt) => (
+                <linearGradient key={`${src}-${tgt}`} id={`edge-grad-${src}-${tgt}`} x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stopColor={ACCENT_HEX[src]} />
+                  <stop offset="1" stopColor={ACCENT_HEX[tgt]} />
+                </linearGradient>
+              ))
+            )}
+          </defs>
           <g transform="translate(4000,4000)">
             {edges.map((edge) => {
               const sourcePoint = portPointById(edge.source, edge.sourcePortId, 'out');
@@ -280,10 +349,21 @@ export function Canvas(props: CanvasProps) {
               const d = edgePath(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y);
               const isActive = activeEdges.has(edge.id);
               const isSelected = selectedEdgeId === edge.id;
+              const isHover = hoverEdge === edge.id;
               const mid = { x: (sourcePoint.x + targetPoint.x) / 2, y: (sourcePoint.y + targetPoint.y) / 2 };
+              const srcAccent = accentById[edge.source] ?? 'utility';
+              const tgtAccent = accentById[edge.target] ?? 'utility';
+              const stroke = `url(#edge-grad-${srcAccent}-${tgtAccent})`;
               return (
                 <g key={edge.id}>
-                  <path className={`edge flow ${isActive ? 'active edge-dash' : ''} ${isSelected ? 'selected' : ''}`} d={d} />
+                  <path className={`edge-glow ${isActive || isSelected ? 'active' : ''}`} d={d} stroke={stroke} />
+                  <path
+                    className={`edge flow ${isActive ? 'active edge-dash' : ''} ${isSelected ? 'selected' : ''} ${
+                      isHover ? 'hover' : ''
+                    }`}
+                    d={d}
+                    stroke={stroke}
+                  />
                   <path
                     className="edge-hit"
                     d={d}
@@ -377,8 +457,20 @@ export function Canvas(props: CanvasProps) {
       {nodes.length === 0 ? (
         <div className="canvas-empty" role="note">
           <div className="ce-inner">
-            <div className="ce-title">Empty canvas</div>
-            <div className="ce-sub">Drag a block from the left to begin a flow.</div>
+            <div className="ce-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                <path d="M10 6.5h2.5a1.5 1.5 0 0 1 1.5 1.5v6" />
+              </svg>
+            </div>
+            <div className="ce-title">Start your flow</div>
+            <div className="ce-sub">Drag a block from the left, or add a source to begin.</div>
+            {!readOnly ? (
+              <button className="btn btn-primary ce-cta" type="button" onClick={() => onAddBlock('reddit.searchPosts')}>
+                Add a Reddit source
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -386,19 +478,26 @@ export function Canvas(props: CanvasProps) {
       <div className="canvas-hint">Drag blocks in · drag a port to wire · scroll to pan · ⌘scroll to zoom</div>
 
       <div className="canvas-toolbar">
-        <button className="tool-btn" title="Zoom out" onClick={() => setView((v) => ({ ...v, k: Math.max(MIN_ZOOM, v.k * 0.88) }))}>
+        <button className="tool-btn" title="Zoom out" onClick={() => zoomToCenter(0.88)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M5 12h14" />
           </svg>
         </button>
         <span className="zoom-val">{Math.round(view.k * 100)}%</span>
-        <button className="tool-btn" title="Zoom in" onClick={() => setView((v) => ({ ...v, k: Math.min(MAX_ZOOM, v.k * 1.14) }))}>
+        <button className="tool-btn" title="Zoom in" onClick={() => zoomToCenter(1.14)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
         <div className="toolbar-sep" />
-        <button className="tool-btn" title="Fit / reset" onClick={onFit}>
+        <button
+          className="tool-btn"
+          title="Fit / reset"
+          onClick={() => {
+            animateView();
+            onFit();
+          }}
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
           </svg>

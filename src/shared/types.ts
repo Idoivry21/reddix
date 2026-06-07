@@ -131,6 +131,22 @@ export interface OutputFile {
   bytes: number;
 }
 
+/**
+ * A flattened, redacted projection of a normalized SocialItem, carried on a run
+ * so the console Output Preview can show real rows. Deliberately omits raw/media/
+ * links so untrusted payloads never enter persisted run records. Absent fields are
+ * null, mirroring the SocialItem contract.
+ */
+export interface RunSampleRow {
+  kind: 'reddit' | 'twitter';
+  id: string;
+  title: string | null;
+  author: string | null;
+  score: number | null;
+  created: string | null;
+  url: string | null;
+}
+
 export interface RunRecord {
   schemaVersion: 1;
   id: string;
@@ -141,5 +157,7 @@ export interface RunRecord {
   steps: RunStep[];
   outputFiles: OutputFile[];
   error: string | null;
+  /** Capped, redacted sample of the items the flow produced (optional for back-compat). */
+  sample?: RunSampleRow[];
 }
 

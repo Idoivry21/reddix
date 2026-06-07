@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createKeyedMutex } from './keyedMutex';
 import { safeSegmentPath } from './safeId';
@@ -17,6 +18,7 @@ export function createStorage(options: StorageOptions) {
   // Serialize run-record read-modify-write per flow so concurrent appends
   // (manual POST /runs + scheduler) never drop records.
   const runWriteMutex = createKeyedMutex();
+  const flowWriteMutex = createKeyedMutex();
 
   async function ensureDirs() {
     await mkdir(flowsDir, { recursive: true });
@@ -26,8 +28,10 @@ export function createStorage(options: StorageOptions) {
   return {
     async saveFlow(flow: PersistedFlow): Promise<void> {
       const filePath = safeSegmentPath(flowsDir, flow.id, '.json');
-      await ensureDirs();
-      await writeJson(filePath, flow);
+      await flowWriteMutex.run(flow.id, async () => {
+        await ensureDirs();
+        await writeJson(filePath, flow);
+      });
     },
 
     async getFlow(flowId: string): Promise<PersistedFlow | null> {
@@ -65,13 +69,17 @@ export function createStorage(options: StorageOptions) {
 
     async getPreferences(): Promise<Preferences> {
       await ensureDirs();
-      const raw = await readJson<Partial<Preferences>>(preferencesPath, {});
+      const raw = await readJson<unknown>(preferencesPath, {});
       const migrated: Preferences = {
         schemaVersion: 1,
-        defaultExportDir: raw.defaultExportDir ?? 'outputs',
-        selectedFlowId: raw.selectedFlowId ?? null
+        defaultExportDir:
+          isRecord(raw) && typeof raw.defaultExportDir === 'string' ? raw.defaultExportDir : 'outputs',
+        selectedFlowId:
+          isRecord(raw) && (typeof raw.selectedFlowId === 'string' || raw.selectedFlowId === null)
+            ? raw.selectedFlowId
+            : null
       };
-      if (raw.schemaVersion !== 1) {
+      if (!isRecord(raw) || raw.schemaVersion !== 1) {
         await writeJson(preferencesPath, migrated);
       }
       return migrated;
@@ -86,7 +94,15 @@ export function createStorage(options: StorageOptions) {
 
 async function readJson<T>(filePath: string, fallback: T): Promise<T> {
   try {
-    return JSON.parse(await readFile(filePath, 'utf8')) as T;
+    const contents = await readFile(filePath, 'utf8');
+    try {
+      return JSON.parse(contents) as T;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return fallback;
+      }
+      throw error;
+    }
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return fallback;
@@ -96,6 +112,42 @@ async function readJson<T>(filePath: string, fallback: T): Promise<T> {
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  const dir = path.dirname(filePath);
+  await mkdir(dir, { recursive: true });
+  const tempPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(tempPath, 'w');
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(tempPath, filePath);
+    await syncDirectory(dir);
+  } catch (error) {
+    if (handle) {
+      await handle.close().catch(() => {});
+    }
+    await unlink(tempPath).catch(() => {});
+    throw error;
+  }
+}
+
+async function syncDirectory(dir: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(dir, 'r');
+    await handle.sync();
+  } catch {
+    // Directory fsync is not available on every filesystem. The temp+rename is
+    // still atomic; skip only the durability flush when the platform refuses it.
+  } finally {
+    if (handle) {
+      await handle.close().catch(() => {});
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

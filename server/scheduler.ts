@@ -11,10 +11,12 @@ interface SchedulerOptions {
   jitterMs: number;
   /** Minimum gap between firing two flows that hit the same provider. */
   providerSpacingMs?: number;
+  /** Maximum number of flows that may execute at once across all triggers. */
+  maxConcurrentRuns?: number;
   /** How often the internal timer evaluates due flows. */
   tickMs?: number;
-  runFlow: (flowId: string) => Promise<void>;
-  onSkip: (flowId: string) => Promise<void>;
+  runFlow: (flowId: string) => Promise<unknown>;
+  onSkip: (flowId: string) => Promise<unknown>;
   now?: () => number;
   random?: () => number;
 }
@@ -25,17 +27,22 @@ interface ScheduleState extends ScheduleRegistration {
 
 const DEFAULT_PROVIDER_SPACING_MS = 5_000;
 const DEFAULT_TICK_MS = 30_000;
+const DEFAULT_MAX_CONCURRENT_RUNS = 8;
 
 export function createScheduler(options: SchedulerOptions) {
   const now = options.now ?? (() => Date.now());
   const random = options.random ?? Math.random;
   const providerSpacingMs = options.providerSpacingMs ?? DEFAULT_PROVIDER_SPACING_MS;
   const tickMs = options.tickMs ?? DEFAULT_TICK_MS;
+  const maxConcurrentRuns = Math.max(1, Math.floor(options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS));
 
   const running = new Set<string>();
   const schedules = new Map<string, ScheduleState>();
   const lastProviderFireAt = new Map<string, number>();
+  const waiters: Array<() => void> = [];
+  let activeRuns = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let tickInFlight = false;
 
   function computeNextRunAt(intervalMs: number, from: number): number {
     const safeInterval = Math.max(intervalMs, options.minIntervalMs);
@@ -48,15 +55,33 @@ export function createScheduler(options: SchedulerOptions) {
     return new Date(computeNextRunAt(intervalMs, fromDate.getTime()));
   }
 
-  async function triggerNow(flowId: string): Promise<void> {
-    if (running.has(flowId)) {
-      await options.onSkip(flowId);
+  async function acquireRunSlot(): Promise<void> {
+    if (activeRuns < maxConcurrentRuns) {
+      activeRuns += 1;
       return;
     }
+    await new Promise<void>((resolve) => waiters.push(resolve));
+  }
+
+  function releaseRunSlot(): void {
+    const next = waiters.shift();
+    if (next) {
+      next();
+      return;
+    }
+    activeRuns -= 1;
+  }
+
+  async function triggerNow(flowId: string): Promise<unknown> {
+    if (running.has(flowId)) {
+      return options.onSkip(flowId);
+    }
     running.add(flowId);
+    await acquireRunSlot();
     try {
-      await options.runFlow(flowId);
+      return await options.runFlow(flowId);
     } finally {
+      releaseRunSlot();
       running.delete(flowId);
     }
   }
@@ -76,6 +101,26 @@ export function createScheduler(options: SchedulerOptions) {
     return schedules.get(flowId)?.nextRunAt ?? null;
   }
 
+  async function triggerDue(
+    flowId: string
+  ): Promise<{ triggered: false; nextRunAt: number | null } | { triggered: true; result: unknown; nextRunAt: number | null }> {
+    const state = schedules.get(flowId);
+    if (!state || !state.enabled || state.paused) {
+      return { triggered: false, nextRunAt: state?.nextRunAt ?? null };
+    }
+    const at = now();
+    if (at < state.nextRunAt || !isProviderSpaced(state.providers, at)) {
+      return { triggered: false, nextRunAt: state.nextRunAt };
+    }
+    for (const provider of state.providers) {
+      lastProviderFireAt.set(provider, at);
+    }
+    const nextRunAt = computeNextRunAt(state.intervalMs, at);
+    schedules.set(flowId, { ...state, nextRunAt });
+    const result = await triggerNow(flowId);
+    return { triggered: true, result, nextRunAt };
+  }
+
   function isProviderSpaced(providers: string[], at: number): boolean {
     return providers.every((provider) => {
       const last = lastProviderFireAt.get(provider);
@@ -84,22 +129,26 @@ export function createScheduler(options: SchedulerOptions) {
   }
 
   async function tick(): Promise<void> {
-    const at = now();
-    const due = [...schedules.entries()]
-      .filter(([, state]) => state.enabled && !state.paused && at >= state.nextRunAt)
-      .sort((a, b) => a[1].nextRunAt - b[1].nextRunAt);
+    if (tickInFlight) {
+      return;
+    }
+    tickInFlight = true;
+    try {
+      const at = now();
+      const due = [...schedules.entries()]
+        .filter(([, state]) => state.enabled && !state.paused && at >= state.nextRunAt)
+        .sort((a, b) => a[1].nextRunAt - b[1].nextRunAt);
 
-    for (const [flowId, state] of due) {
-      // Per-provider spacing: defer (do NOT advance next-run) so this flow is
-      // retried on the next tick once the provider window clears.
-      if (!isProviderSpaced(state.providers, at)) {
-        continue;
+      for (const [flowId, state] of due) {
+        // Per-provider spacing: defer (do NOT advance next-run) so this flow is
+        // retried on the next tick once the provider window clears.
+        if (!isProviderSpaced(state.providers, at)) {
+          continue;
+        }
+        await triggerDue(flowId);
       }
-      for (const provider of state.providers) {
-        lastProviderFireAt.set(provider, at);
-      }
-      schedules.set(flowId, { ...state, nextRunAt: computeNextRunAt(state.intervalMs, at) });
-      await triggerNow(flowId);
+    } finally {
+      tickInFlight = false;
     }
   }
 
@@ -124,6 +173,7 @@ export function createScheduler(options: SchedulerOptions) {
 
   return {
     triggerNow,
+    triggerDue,
     nextRunAt,
     register,
     unregister,

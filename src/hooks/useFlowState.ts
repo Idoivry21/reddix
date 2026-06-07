@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBlockSpec, getDefaultSettings } from '../shared/commandBuilders';
 import { canConnect, validateFlow } from '../shared/graph';
-import { getFlow, listFlows, postRun, saveFlow, subscribeRunEvents, type ConsoleState } from '../api';
+import {
+  getFlow,
+  listFlows,
+  listRuns,
+  postRun,
+  saveFlow,
+  subscribeRunEvents,
+  type ConsoleHistoryEntry,
+  type ConsoleState
+} from '../api';
 import {
   DEFAULT_FLOW_ID,
   type CanvasView,
@@ -13,7 +22,7 @@ import {
 } from '../flowTypes';
 import { createBlockNode } from '../flowFactory';
 import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
-import { capLogs, runRecordToConsoleState, runStepToConsoleStep } from '../runConsole';
+import { capLogs, runRecordToConsoleState, runsToHistoryEntries, runStepToConsoleStep } from '../runConsole';
 import { createSampleEdges, createSampleNodes, SAMPLE_FLOW_NAME } from '../sampleFlow';
 import { cronToIntervalMs } from '../scheduleCadence';
 import { DEFAULT_NODE_SIZE } from '../canvasGeometry';
@@ -21,6 +30,9 @@ import type { SavedSchedule } from '../components/ScheduleModal';
 import type { FlowSummary } from '../components/Dashboard';
 import { accentForBlock, type AccentKey } from '../blockVisuals';
 import type { PersistedFlow } from '../shared/types';
+import { useToasts } from './useToasts';
+
+const MAX_HISTORY = 50;
 
 export type { WorkbenchNode } from '../flowTypes';
 
@@ -60,6 +72,8 @@ export function useWorkbenchState() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [flowSummaries, setFlowSummaries] = useState<FlowSummary[]>([]);
   const [dragType, setDragType] = useState<string | null>(null);
+
+  const { toasts, pushToast, dismissToast } = useToasts();
 
   const runToken = useRef(0);
   const addCounter = useRef(0);
@@ -160,6 +174,7 @@ export function useWorkbenchState() {
       });
       if (!result.valid) {
         setValidationMessage(result.reason);
+        pushToast(result.reason, 'error');
         return;
       }
       setValidationMessage('Ready to run');
@@ -176,7 +191,7 @@ export function useWorkbenchState() {
         ];
       });
     },
-    [nodes]
+    [nodes, pushToast]
   );
 
   const deleteEdge = useCallback((edgeId: string) => {
@@ -252,19 +267,48 @@ export function useWorkbenchState() {
     });
   }, [setNodeStatus]);
 
+  // ----- run history (persisted, loaded on open) -----
+  const loadHistory = useCallback(
+    (flowId: string) => {
+      listRuns(flowId)
+        .then((runs) => {
+          const entries = runsToHistoryEntries(runs);
+          setConsoleState((current) => ({ ...current, history: mergeHistory(entries, current.history) }));
+        })
+        .catch(() => pushToast('Could not load run history', 'warning'));
+    },
+    [pushToast]
+  );
+
+  useEffect(() => {
+    loadHistory(DEFAULT_FLOW_ID);
+    // Load persisted history once on mount for the initial sample flow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live run progress for the console head: completed vs total steps.
+  const runProgress = useMemo(() => {
+    const done = consoleState.steps.filter(
+      (step) => step.status === 'success' || step.status === 'failed' || step.status === 'skipped'
+    ).length;
+    return { done, total: nodes.length };
+  }, [consoleState.steps, nodes.length]);
+
   // ----- run -----
   const runNow = useCallback(async () => {
     const model = toFlowModel(nodes, edges);
     const validation = validateFlow(model);
     if (!validation.valid) {
       const messages = validation.errors.map((error) => error.message);
+      const headline = messages[0] ?? 'flow is invalid';
       setValidationMessage(messages[0] ?? 'Flow is invalid');
-      setRunStatus({ kind: 'error', message: `Run blocked: ${messages[0] ?? 'flow is invalid'}` });
+      setRunStatus({ kind: 'error', message: `Run blocked: ${headline}` });
       setConsoleState((current) => ({
         ...current,
         activeTab: 'Logs',
         logs: ['Run blocked: flow failed validation', ...messages.map((message) => `• ${message}`)]
       }));
+      pushToast(`Run blocked: ${headline}`, 'error');
       return;
     }
 
@@ -292,11 +336,19 @@ export function useWorkbenchState() {
       setNodes((current) => applyRunStatuses(current, run));
       const ok = run.status === 'success';
       const hasFailedStep = run.steps.some((step) => step.status === 'failed');
+      const rowCount = run.sample?.length ?? 0;
+      const failedCount = run.steps.filter((step) => step.status === 'failed').length;
       setValidationMessage(ok ? 'Run completed' : 'Run finished with errors');
       setRunStatus(
         ok
           ? { kind: 'success', message: 'Run completed successfully' }
           : { kind: hasFailedStep ? 'error' : 'warning', message: 'Run finished with errors' }
+      );
+      pushToast(
+        ok
+          ? `Run complete — ${rowCount} row${rowCount === 1 ? '' : 's'}`
+          : `Run finished with ${failedCount} failed step${failedCount === 1 ? '' : 's'}`,
+        ok ? 'success' : hasFailedStep ? 'error' : 'warning'
       );
     } catch (error) {
       if (runToken.current !== token) {
@@ -306,13 +358,14 @@ export function useWorkbenchState() {
       setValidationMessage('Run failed');
       setRunStatus({ kind: 'error', message: `Run failed: ${message}` });
       setConsoleState((current) => ({ ...current, activeTab: 'Logs', logs: capLogs([`Run failed: ${message}`, ...current.logs]) }));
+      pushToast(`Run failed: ${message}`, 'error');
     } finally {
       if (runToken.current === token) {
         isRunningRef.current = false;
         setIsRunning(false);
       }
     }
-  }, [activeFlowId, edges, flowName, nodes, schedule]);
+  }, [activeFlowId, edges, flowName, nodes, schedule, pushToast]);
 
   const stopRun = useCallback(() => {
     runToken.current += 1;
@@ -321,10 +374,13 @@ export function useWorkbenchState() {
     setRunStatus({ kind: 'idle', message: 'Run stopped' });
     setNodes((current) => current.map((node) => ({ ...node, status: 'idle' })));
     setConsoleState((current) => ({ ...current, logs: capLogs(['■ run stopped by user', ...current.logs]) }));
-  }, []);
+    pushToast('Run stopped', 'info');
+  }, [pushToast]);
 
   const clearConsole = useCallback(() => {
-    setConsoleState((current) => ({ ...current, logs: [], steps: [], results: [] }));
+    // Clear the report link too: keeping "Open report" after a clear implies the
+    // emptied console still has an associated run.
+    setConsoleState((current) => ({ ...current, logs: [], steps: [], results: [], reportPath: undefined }));
   }, []);
 
   // ----- schedule -----
@@ -341,12 +397,14 @@ export function useWorkbenchState() {
         );
         await saveFlow(activeFlowId, body);
         setRunStatus({ kind: 'idle', message: next.enabled ? 'Schedule saved' : 'Schedule paused' });
+        pushToast(next.enabled ? 'Schedule saved' : 'Schedule paused', 'success');
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unexpected error';
         setRunStatus({ kind: 'error', message: `Schedule save failed: ${message}` });
+        pushToast(`Schedule save failed: ${message}`, 'error');
       }
     },
-    [activeFlowId, edges, flowName, nodes]
+    [activeFlowId, edges, flowName, nodes, pushToast]
   );
 
   // ----- dashboard -----
@@ -386,6 +444,7 @@ export function useWorkbenchState() {
         const flow = await getFlow(flowId);
         if (!flow) {
           setRunStatus({ kind: 'error', message: 'Flow not found' });
+          pushToast('Flow not found', 'error');
           return;
         }
         setNodes(rehydrateNodes(flow));
@@ -397,13 +456,15 @@ export function useWorkbenchState() {
         setSelectedEdgeId(null);
         setConsoleState(emptyConsoleState());
         setShowDashboard(false);
+        loadHistory(flow.id);
         window.setTimeout(fitView, 60);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unexpected error';
         setRunStatus({ kind: 'error', message: `Failed to open flow: ${message}` });
+        pushToast(`Failed to open flow: ${message}`, 'error');
       }
     },
-    [activeFlowId, fitView]
+    [activeFlowId, fitView, loadHistory, pushToast]
   );
 
   const newFlow = useCallback(() => {
@@ -468,8 +529,30 @@ export function useWorkbenchState() {
     openDashboard,
     dashboardFlows,
     openFlow,
-    newFlow
+    newFlow,
+    toasts,
+    pushToast,
+    dismissToast,
+    runProgress
   };
+}
+
+/**
+ * Merge persisted history with current-session entries, deduped by run id with
+ * the session copy winning (freshest), newest-first, capped.
+ */
+function mergeHistory(loaded: ConsoleHistoryEntry[], session: ConsoleHistoryEntry[]): ConsoleHistoryEntry[] {
+  const seen = new Set<string>();
+  const merged: ConsoleHistoryEntry[] = [];
+  // Session entries come first so the freshest copy wins on an id collision.
+  for (const entry of [...session, ...loaded]) {
+    if (seen.has(entry.id)) {
+      continue;
+    }
+    seen.add(entry.id);
+    merged.push(entry);
+  }
+  return merged.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, MAX_HISTORY);
 }
 
 function rehydrateNodes(flow: PersistedFlow): WorkbenchNode[] {

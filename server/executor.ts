@@ -5,7 +5,9 @@ import { createCappedBuffer } from './cappedBuffer';
 import type { CliExecutor, ExecutorResult } from './types';
 
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10 MiB per stream
+const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
 const OUTPUT_LIMIT_EXIT_CODE = 1;
+const TIMEOUT_EXIT_CODE = 124;
 
 /**
  * Builds a least-privilege environment for a spawned CLI: only the variables
@@ -25,9 +27,15 @@ export function resolveMaxOutputBytes(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_OUTPUT_BYTES;
 }
 
+export function resolveCliTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.REDDIX_CLI_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+}
+
 interface SpawnCappedOptions {
   env: NodeJS.ProcessEnv;
   maxOutputBytes: number;
+  timeoutMs?: number;
 }
 
 /**
@@ -44,21 +52,39 @@ export function spawnCapped(
     const child = spawn(executable, argv, { shell: false, env: options.env });
     const stdout = createCappedBuffer(options.maxOutputBytes);
     const stderr = createCappedBuffer(options.maxOutputBytes);
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let settled = false;
+    let timedOut = false;
 
     const finalize = (exitCode: number): void => {
       if (settled) {
         return;
       }
       settled = true;
+      clearTimeout(timeout);
       if (stdout.truncated || stderr.truncated) {
         const reason = `[reddix] output exceeded ${options.maxOutputBytes} bytes; process terminated`;
         const combinedStderr = stderr.value ? `${stderr.value}\n${reason}` : reason;
         resolve({ stdout: stdout.value, stderr: combinedStderr, exitCode: OUTPUT_LIMIT_EXIT_CODE });
         return;
       }
+      if (timedOut) {
+        const reason = `[reddix] process timed out after ${timeoutMs} ms; process terminated`;
+        const combinedStderr = stderr.value ? `${stderr.value}\n${reason}` : reason;
+        resolve({ stdout: stdout.value, stderr: combinedStderr, exitCode: TIMEOUT_EXIT_CODE });
+        return;
+      }
       resolve({ stdout: stdout.value, stderr: stderr.value, exitCode });
     };
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+      finalize(TIMEOUT_EXIT_CODE);
+    }, timeoutMs);
+    if (typeof timeout.unref === 'function') {
+      timeout.unref();
+    }
 
     const killIfOver = (): void => {
       if (stdout.truncated || stderr.truncated) {
@@ -79,6 +105,7 @@ export function spawnCapped(
         return;
       }
       settled = true;
+      clearTimeout(timeout);
       resolve({ stdout: stdout.value, stderr: error.message, exitCode: 127 });
     });
     child.on('close', (code) => {
@@ -90,18 +117,15 @@ export function spawnCapped(
 export const cliExecutor: CliExecutor = (command: BuiltCommand) =>
   spawnCapped(command.executable, command.argv, {
     env: buildCliEnv(process.env),
-    maxOutputBytes: resolveMaxOutputBytes(process.env)
+    maxOutputBytes: resolveMaxOutputBytes(process.env),
+    timeoutMs: resolveCliTimeoutMs(process.env)
   });
 
 export async function checkExecutable(executable: string): Promise<boolean> {
-  const result = await new Promise<ExecutorResult>((resolve) => {
-    const child = spawn(executable, ['--help'], { shell: false, env: buildCliEnv(process.env) });
-    child.on('error', (error) => {
-      resolve({ stdout: '', stderr: error.message, exitCode: 127 });
-    });
-    child.on('close', (code) => {
-      resolve({ stdout: '', stderr: '', exitCode: code ?? 1 });
-    });
+  const result = await spawnCapped(executable, ['--help'], {
+    env: buildCliEnv(process.env),
+    maxOutputBytes: 64 * 1024,
+    timeoutMs: Math.min(resolveCliTimeoutMs(process.env), 5_000)
   });
   return result.exitCode === 0;
 }

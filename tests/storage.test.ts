@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -94,6 +94,22 @@ describe('local JSON storage', () => {
     expect(new Set(ids).size).toBe(25);
   });
 
+  it('ignores corrupt JSON files instead of throwing during reads', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    await mkdir(path.join(dir, 'flows'), { recursive: true });
+    await mkdir(path.join(dir, 'runs'), { recursive: true });
+    await writeFile(path.join(dir, 'flows', 'broken.json'), '{"id":');
+    await writeFile(path.join(dir, 'runs', 'flow-1.json'), '[');
+    const storage = createStorage({ baseDir: dir });
+
+    await expect(storage.listFlows()).resolves.toEqual([]);
+    await expect(storage.getFlow('broken')).resolves.toBeNull();
+    await expect(storage.listRuns('flow-1')).resolves.toEqual([]);
+
+    await storage.appendRun(run('new', 'flow-1'));
+    expect((await storage.listRuns('flow-1')).map((record) => record.id)).toEqual(['new']);
+  });
+
   it('migrates schema-less preferences on load', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
     await writeFile(
@@ -108,6 +124,21 @@ describe('local JSON storage', () => {
       selectedFlowId: 'flow-1'
     });
     expect(JSON.parse(await readFile(path.join(dir, 'preferences.json'), 'utf8')).schemaVersion).toBe(1);
+  });
+
+  it('preserves valid preference fields while normalizing an invalid schema version', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    await writeFile(
+      path.join(dir, 'preferences.json'),
+      JSON.stringify({ schemaVersion: '1', defaultExportDir: 'exports', selectedFlowId: 'flow-1' })
+    );
+
+    const storage = createStorage({ baseDir: dir });
+    expect(await storage.getPreferences()).toEqual({
+      schemaVersion: 1,
+      defaultExportDir: 'exports',
+      selectedFlowId: 'flow-1'
+    });
   });
 });
 
@@ -139,4 +170,3 @@ function run(id: string, flowId: string): RunRecord {
     error: null
   };
 }
-

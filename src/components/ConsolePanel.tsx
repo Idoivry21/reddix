@@ -12,6 +12,7 @@ interface ConsolePanelProps {
   setCollapsed?: (collapsed: boolean) => void;
   onClear?: () => void;
   runState?: RunStatusKind;
+  progress?: { done: number; total: number };
 }
 
 const TABS: ConsoleState['activeTab'][] = ['Logs', 'Output Preview', 'Command Trace', 'History'];
@@ -27,7 +28,8 @@ export function ConsolePanel({
   collapsed = false,
   setCollapsed,
   onClear,
-  runState = 'idle'
+  runState = 'idle',
+  progress
 }: ConsolePanelProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const resizing = useRef<{ y: number; h: number } | null>(null);
@@ -79,12 +81,23 @@ export function ConsolePanel({
         </div>
         <div className="console-spacer" />
         {runState === 'running' ? (
-          <span className="console-meta">
-            <span className="spin-fast console-spin" /> executing
+          <span className="console-meta" role="status" aria-live="polite">
+            <span className="spin-fast console-spin" />
+            {progress && progress.total > 0 ? `${progress.done} / ${progress.total} steps` : 'executing'}
           </span>
         ) : (
           <span className="console-meta">{state.runLabel}</span>
         )}
+        {state.reportPath ? (
+          <a
+            className="console-report-link"
+            href={`/api/artifacts/${state.reportPath}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open report ↗
+          </a>
+        ) : null}
         <button className="console-btn" type="button" title="Clear logs" aria-label="Clear logs" onClick={onClear}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
@@ -187,7 +200,7 @@ function CommandTrace({ steps }: { steps: ConsoleRunStep[] }) {
 
 function HistoryList({ entries }: { entries: ConsoleState['history'] }) {
   if (entries.length === 0) {
-    return <div className="out-empty">No run history yet.</div>;
+    return <div className="out-empty">No runs yet for this flow.</div>;
   }
   return (
     <ul className="history-list">
@@ -206,30 +219,52 @@ function HistoryList({ entries }: { entries: ConsoleState['history'] }) {
 
 function ResultTable({ rows }: { rows: Array<Record<string, string | number | null>> }) {
   if (rows.length === 0) {
-    return <div className="out-empty">No output rows. Run a flow with an export block to see results.</div>;
+    return (
+      <div className="out-empty">
+        No rows yet — press <strong>Run flow</strong>; exported items appear here.
+      </div>
+    );
   }
+  const capped = rows.length >= 50;
   return (
-    <table className="out-table">
-      <thead>
-        <tr>
-          <th>kind</th>
-          <th>title / body</th>
-          <th>author</th>
-          <th>score</th>
-          <th>created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, index) => (
-          <tr key={`${index}-${row.kind}-${row.id ?? row.title}`}>
-            <td>{row.kind}</td>
-            <td>{row.title}</td>
-            <td>{row.author}</td>
-            <td className="num">{row.score}</td>
-            <td>{row.created}</td>
+    <div className="out-table-wrap">
+      <div className="out-caption">
+        {rows.length} row{rows.length === 1 ? '' : 's'}
+        {capped ? ' · showing first 50' : ''}
+      </div>
+      <table className="out-table">
+        <thead>
+          <tr>
+            <th>kind</th>
+            <th>title / body</th>
+            <th>author</th>
+            <th>score</th>
+            <th>created</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const url = typeof row.url === 'string' ? row.url : null;
+            return (
+              <tr key={`${index}-${row.kind}-${row.id ?? row.title}`}>
+                <td>{row.kind}</td>
+                <td className="out-title">
+                  {url ? (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      {row.title ?? url}
+                    </a>
+                  ) : (
+                    row.title
+                  )}
+                </td>
+                <td>{row.author}</td>
+                <td className="num">{row.score}</td>
+                <td>{row.created}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

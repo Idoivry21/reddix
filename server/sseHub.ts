@@ -3,6 +3,7 @@ import type { RequestHandler, Response } from 'express';
 interface SseClient {
   id: number;
   response: Response;
+  idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface SseHubOptions {
@@ -12,11 +13,14 @@ interface SseHubOptions {
   heartbeatMs?: number;
   /** Reconnect hint (ms) sent to the browser EventSource. */
   retryMs?: number;
+  /** Maximum lifetime for a connection that never closes cleanly. */
+  idleTimeoutMs?: number;
 }
 
 const DEFAULT_MAX_CLIENTS = 50;
 const DEFAULT_HEARTBEAT_MS = 25_000;
 const DEFAULT_RETRY_MS = 3_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 export interface SseHub {
   handler: RequestHandler;
@@ -36,12 +40,17 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
   const maxClients = options.maxClients ?? DEFAULT_MAX_CLIENTS;
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
 
   const clients = new Map<number, SseClient>();
   let clientId = 0;
 
   function drop(client: SseClient): void {
     clients.delete(client.id);
+    if (client.idleTimer) {
+      clearTimeout(client.idleTimer);
+      client.idleTimer = null;
+    }
     try {
       client.response.end();
     } catch {
@@ -52,7 +61,11 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
   /** Write to one client, dropping it if the socket is gone. Returns success. */
   function safeWrite(client: SseClient, chunk: string): boolean {
     try {
-      client.response.write(chunk);
+      const writable = client.response.write(chunk);
+      if (!writable) {
+        drop(client);
+        return false;
+      }
       return true;
     } catch {
       drop(client);
@@ -71,11 +84,17 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
       Connection: 'keep-alive'
     });
     const id = clientId++;
-    const client: SseClient = { id, response };
+    const client: SseClient = { id, response, idleTimer: null };
+    client.idleTimer = setTimeout(() => {
+      drop(client);
+    }, idleTimeoutMs);
+    if (typeof client.idleTimer.unref === 'function') {
+      client.idleTimer.unref();
+    }
     clients.set(id, client);
     safeWrite(client, `retry: ${retryMs}\n\nevent: ready\ndata: {}\n\n`);
     request.on('close', () => {
-      clients.delete(id);
+      drop(client);
     });
   };
 

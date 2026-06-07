@@ -6,16 +6,20 @@ import { Inspector } from './components/Inspector';
 import { TopBar } from './components/TopBar';
 import { ScheduleModal } from './components/ScheduleModal';
 import { Dashboard } from './components/Dashboard';
+import { ToastViewport } from './components/ToastViewport';
+import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { useWorkbenchState } from './hooks/useFlowState';
 import { useProviderHealth } from './hooks/useProviderHealth';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
+import { useOnboarding } from './hooks/useOnboarding';
 
 export function App() {
   const workbench = useWorkbenchState();
   const health = useProviderHealth();
   const readOnly = useIsMobile();
   const { theme, toggleTheme } = useTheme();
+  const { showWelcome, dismissOnboarding } = useOnboarding();
 
   const { selectedNodeId, selectedEdgeId, deleteNode, deleteEdge, runNow } = workbench;
 
@@ -101,6 +105,7 @@ export function App() {
         onDropBlock={workbench.dropBlock}
         onPaneClick={workbench.clearSelection}
         onFit={workbench.fitView}
+        onAddBlock={workbench.addBlock}
         dragType={workbench.dragType}
         readOnly={readOnly}
       />
@@ -126,6 +131,7 @@ export function App() {
         setCollapsed={workbench.setConsoleCollapsed}
         onClear={workbench.clearConsole}
         runState={workbench.runStatus.kind}
+        progress={workbench.runProgress}
       />
 
       {workbench.showSchedule ? (
@@ -145,6 +151,18 @@ export function App() {
           onNew={workbench.newFlow}
         />
       ) : null}
+
+      {showWelcome && !readOnly ? (
+        <WelcomeOverlay
+          onRun={() => {
+            dismissOnboarding();
+            void workbench.runNow();
+          }}
+          onDismiss={dismissOnboarding}
+        />
+      ) : null}
+
+      <ToastViewport toasts={workbench.toasts} onDismiss={workbench.dismissToast} />
     </div>
   );
 }

@@ -37,4 +37,17 @@ describe('spawnCapped', () => {
     expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThanOrEqual(1000);
     expect(result.stderr).toContain('output exceeded');
   });
+
+  it('terminates a silent process after the timeout elapses', async () => {
+    const started = Date.now();
+    const result = await spawnCapped(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)'],
+      { env: process.env, maxOutputBytes: 1000, timeoutMs: 50 }
+    );
+
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('timed out');
+  });
 });

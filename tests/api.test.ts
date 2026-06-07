@@ -10,6 +10,10 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as Response;
 }
 
+function nonJsonResponse(ok = false, status = 500): Response {
+  return { ok, status, json: async () => { throw new Error('not json'); } } as unknown as Response;
+}
+
 describe('saveFlow', () => {
   it('PUTs the flow body and returns the saved flow', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ flow: { id: 'primary' } }));
@@ -54,6 +58,12 @@ describe('postRun', () => {
 
     expect(result.status).toBe('failed');
   });
+
+  it('throws a status error when a non-JSON error response has no run body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(nonJsonResponse(false, 503)));
+
+    await expect(postRun('primary')).rejects.toThrow('status 503');
+  });
 });
 
 describe('subscribeRunEvents', () => {
@@ -69,8 +79,9 @@ describe('subscribeRunEvents', () => {
 
     const onStep = vi.fn();
     const onComplete = vi.fn();
+    const onError = vi.fn();
     const unsubscribe = subscribeRunEvents(
-      { onStep, onComplete },
+      { onStep, onComplete, onError },
       (url) => new FakeEventSource() as unknown as EventSource
     );
 
@@ -79,6 +90,9 @@ describe('subscribeRunEvents', () => {
 
     expect(onStep).toHaveBeenCalledWith({ type: 'step' });
     expect(onComplete).toHaveBeenCalledWith({ run: { id: 'r' } });
+
+    expect(() => listeners['run-step']({ data: '{' } as MessageEvent)).not.toThrow();
+    expect(onError).toHaveBeenCalled();
 
     unsubscribe();
     expect(close).toHaveBeenCalled();

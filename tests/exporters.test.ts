@@ -35,6 +35,14 @@ describe('exporters', () => {
     );
   });
 
+  it('neutralizes spreadsheet formula cells in CSV exports', () => {
+    const csv = serializeCsv([{ ...item, title: '=HYPERLINK("https://evil.example")', body: '+SUM(1,2)' }]);
+
+    expect(csv).toContain('\'=HYPERLINK');
+    expect(csv).toContain("\"'+SUM");
+    expect(csv).not.toContain('\nreddit,abc,2026-06-01T10:00:00.000Z,devops_dave,localdev,=HYPERLINK');
+  });
+
   it('serializes Markdown grouped by platform', () => {
     expect(serializeMarkdown([item])).toContain('## Reddit');
     expect(serializeMarkdown([item])).toContain('[CLI tools](https://reddit.com/r/localdev/comments/abc/test)');
@@ -46,4 +54,3 @@ describe('exporters', () => {
     );
   });
 });
-

@@ -1,6 +1,6 @@
 import type { ConsoleHistoryEntry, ConsoleRunStep, ConsoleState } from './api';
 import { getBlockSpec } from './shared/commandBuilders';
-import type { RunRecord, RunStep } from './shared/types';
+import type { RunRecord, RunSampleRow, RunStep } from './shared/types';
 
 const MAX_HISTORY_ENTRIES = 50;
 const MAX_LOG_LINES = 200;
@@ -11,9 +11,9 @@ export function capLogs(logs: string[], max = MAX_LOG_LINES): string[] {
 }
 
 /**
- * Maps a backend RunRecord onto the console view model. The record only carries
- * step status + output file metadata (not the SocialItem rows), so the Output
- * Preview results stay empty and the artifacts surface as log lines instead.
+ * Maps a backend RunRecord onto the console view model. The run carries a capped,
+ * redacted `sample` of the items it produced, which becomes the Output Preview
+ * rows; output artifacts also surface as log lines.
  */
 export function runRecordToConsoleState(
   run: RunRecord,
@@ -27,7 +27,8 @@ export function runRecordToConsoleState(
     runLabel: `Run ${run.startedAt}`,
     steps: run.steps.map((step) => toConsoleStep(step, nodeTypeById[step.blockId])),
     logs: capLogs(buildLogs(run)),
-    results: [],
+    results: toResultRows(run.sample),
+    reportPath: latestHtmlReport(run),
     // Dedupe by run id: SSE onComplete and the REST response both map the same
     // run, so filter any existing entry for this id before prepending.
     history: [toHistoryEntry(run), ...(prev.history ?? []).filter((entry) => entry.id !== run.id)].slice(
@@ -37,7 +38,21 @@ export function runRecordToConsoleState(
   };
 }
 
-function toHistoryEntry(run: RunRecord): ConsoleHistoryEntry {
+/**
+ * The most recent HTML report artifact a run produced, used by the console to
+ * surface an "Open report" link. Output files are appended in node order, so the
+ * last `.html` entry is the freshest report.
+ */
+function latestHtmlReport(run: RunRecord): string | undefined {
+  for (let index = run.outputFiles.length - 1; index >= 0; index -= 1) {
+    if (run.outputFiles[index].path.toLowerCase().endsWith('.html')) {
+      return run.outputFiles[index].path;
+    }
+  }
+  return undefined;
+}
+
+export function toHistoryEntry(run: RunRecord): ConsoleHistoryEntry {
   return {
     id: run.id,
     status: run.status,
@@ -45,6 +60,32 @@ function toHistoryEntry(run: RunRecord): ConsoleHistoryEntry {
     steps: run.steps.length,
     error: run.error
   };
+}
+
+/** Map persisted runs into history entries, newest-first and capped. */
+export function runsToHistoryEntries(runs: RunRecord[]): ConsoleHistoryEntry[] {
+  return [...runs]
+    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+    .slice(0, MAX_HISTORY_ENTRIES)
+    .map(toHistoryEntry);
+}
+
+/** Project the run sample into the generic row shape the Output Preview renders. */
+export function toResultRows(
+  sample: RunSampleRow[] | undefined
+): Array<Record<string, string | number | null>> {
+  if (!sample) {
+    return [];
+  }
+  return sample.map((row) => ({
+    kind: row.kind,
+    id: row.id,
+    title: row.title,
+    author: row.author,
+    score: row.score,
+    created: row.created,
+    url: row.url
+  }));
 }
 
 export function runStepToConsoleStep(step: RunStep, blockType: string | undefined): ConsoleRunStep {

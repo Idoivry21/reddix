@@ -44,6 +44,42 @@ describe('ConsolePanel command trace', () => {
     expect(screen.getByText(/no run yet|run the flow/i)).toBeInTheDocument();
   });
 
+  it('shows an "Open report" link to the artifact when a run produced an HTML report', () => {
+    const state = baseState({ reportPath: 'outputs/report-20260601-100000.html' });
+    render(<ConsolePanel state={state} onTabChange={vi.fn()} />);
+
+    const link = screen.getByRole('link', { name: /open report/i });
+    expect(link).toHaveAttribute('href', '/api/artifacts/outputs/report-20260601-100000.html');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('hides the "Open report" link when no HTML report is present', () => {
+    render(<ConsolePanel state={baseState()} onTabChange={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: /open report/i })).not.toBeInTheDocument();
+  });
+
+  it('renders output preview rows with a linked title and a count caption', () => {
+    const state = baseState({
+      activeTab: 'Output Preview',
+      results: [
+        { kind: 'reddit', id: 'p1', title: 'Hello world', author: 'bob', score: 12, created: '2026-06-06', url: 'https://example.com/p1' }
+      ]
+    });
+    render(<ConsolePanel state={state} onTabChange={vi.fn()} />);
+
+    const link = screen.getByRole('link', { name: /hello world/i });
+    expect(link).toHaveAttribute('href', 'https://example.com/p1');
+    expect(screen.getByText(/1 row/i)).toBeInTheDocument();
+  });
+
+  it('shows live step progress in the head while running', () => {
+    render(
+      <ConsolePanel state={baseState()} onTabChange={vi.fn()} runState="running" progress={{ done: 3, total: 7 }} />
+    );
+    expect(screen.getByText(/3 \/ 7 steps/)).toBeInTheDocument();
+  });
+
   it('renders run history entries on the History tab', () => {
     const state = baseState({
       activeTab: 'History',
