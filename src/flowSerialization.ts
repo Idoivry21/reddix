@@ -2,6 +2,13 @@ import type { FlowEdgeModel, FlowModel, FlowNodeModel } from './shared/graph';
 import type { PersistedFlow } from './shared/types';
 import type { WorkbenchEdge, WorkbenchNode } from './flowTypes';
 
+/**
+ * UI-side flow metadata. Uses `flowId` (not `id`) to disambiguate from node/edge
+ * ids at call sites; it is translated to the persisted/REST contract name `id`
+ * in {@link toFlowRequestBody}. This rename is a deliberate boundary, not drift —
+ * `id` is the storage shape ({@link PersistedFlow.id}) and cannot change without a
+ * data migration.
+ */
 export interface FlowMeta {
   flowId: string;
   name: string;
@@ -45,6 +52,10 @@ export function toFlowRequestBody(
   };
 }
 
+// Boundary: the UI node calls its block kind `blockType`; the shared/persisted
+// FlowNodeModel calls it `type`. The two names are intentional (the persisted
+// `type` is the on-disk/zod contract) — this is the single translation point in.
+// rehydrateNodes (useWorkbenchState) is the reverse translation out.
 function toFlowNode(node: WorkbenchNode): FlowNodeModel {
   return {
     id: node.id,

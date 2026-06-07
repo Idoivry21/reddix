@@ -6,6 +6,9 @@ import { createLogger } from './logger';
 import { createMetrics } from './metrics';
 import { createStorage } from './storage';
 
+/** Hard-kill the process if a graceful shutdown stalls past this window. */
+const SHUTDOWN_FORCE_EXIT_MS = 10_000;
+
 const { port, dataDir } = validateEnv(process.env);
 const logger = createLogger();
 const metrics = createMetrics();
@@ -44,7 +47,7 @@ function shutdown(reason: string, exitCode = 0): void {
     process.exit(exitCode);
   });
   // Failsafe: force exit if the server does not close in time.
-  const timer = setTimeout(() => process.exit(exitCode), 10_000);
+  const timer = setTimeout(() => process.exit(exitCode), SHUTDOWN_FORCE_EXIT_MS);
   timer.unref();
 }
 

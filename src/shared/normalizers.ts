@@ -1,4 +1,5 @@
 import type { SocialItem } from './types';
+import { coerceFiniteNumber, isRecord } from './values';
 
 /**
  * Called when a CLI payload has content but no recognizable item array could be
@@ -48,8 +49,9 @@ export function normalizeTwitterPayload(
     // twitter-cli nests counts under `metrics` and the author under `author.screenName`.
     // Keep flat fallbacks so older/alternate payload shapes still normalize.
     const metrics: RawRecord = isRecord(raw.metrics) ? raw.metrics : {};
+    const author: RawRecord = isRecord(raw.author) ? raw.author : {};
     const handle = stringValue(
-      raw.author?.screenName ?? raw.author?.handle ?? raw.author?.username ?? raw.username ?? raw.user
+      author.screenName ?? author.handle ?? author.username ?? raw.username ?? raw.user
     );
     const id = stringValue(raw.id ?? raw.rest_id) ?? '';
     return {
@@ -82,7 +84,7 @@ function tweetUrl(handle: string | null, id: string): string | null {
   return handle && id ? `https://x.com/${handle}/status/${id}` : null;
 }
 
-type RawRecord = Record<string, any>;
+type RawRecord = Record<string, unknown>;
 
 function extractArray(payload: unknown, onUnrecognized?: UnrecognizedPayloadHandler): RawRecord[] {
   const value = payload as RawRecord;
@@ -108,23 +110,11 @@ function extractArray(payload: unknown, onUnrecognized?: UnrecognizedPayloadHand
   return [];
 }
 
-function isRecord(value: unknown): value is RawRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-function numberValue(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
-    return Number(value);
-  }
-  return null;
-}
+const numberValue = coerceFiniteNumber;
 
 function toIsoDate(value: unknown): string {
   if (typeof value === 'number') {

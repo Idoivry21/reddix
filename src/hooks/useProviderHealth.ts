@@ -3,10 +3,8 @@ import { fetchHealth, type ProviderHealth } from '../api';
 
 export interface ProviderHealthState {
   providers: ProviderHealth[];
-  loading: boolean;
-  error: boolean;
-  /** Human-readable reason when the health check failed, for diagnostics. */
-  errorReason?: string;
+  isLoading: boolean;
+  hasError: boolean;
 }
 
 /**
@@ -17,20 +15,20 @@ export interface ProviderHealthState {
 export function useProviderHealth(): ProviderHealthState {
   const [state, setState] = useState<ProviderHealthState>({
     providers: [],
-    loading: true,
-    error: false
+    isLoading: true,
+    hasError: false
   });
 
   useEffect(() => {
     if (typeof fetch === 'undefined') {
-      setState({ providers: [], loading: false, error: true, errorReason: 'fetch unavailable' });
+      setState({ providers: [], isLoading: false, hasError: true });
       return;
     }
     let cancelled = false;
     fetchHealth()
       .then((health) => {
         if (!cancelled) {
-          setState({ providers: health.providers ?? [], loading: false, error: false });
+          setState({ providers: health.providers ?? [], isLoading: false, hasError: false });
         }
       })
       .catch((error: unknown) => {
@@ -38,7 +36,7 @@ export function useProviderHealth(): ProviderHealthState {
           const reason = error instanceof Error ? error.message : 'Unknown error';
           // Diagnostic trail: distinguishes backend-down from network failure.
           console.warn('Provider health check failed:', reason);
-          setState({ providers: [], loading: false, error: true, errorReason: reason });
+          setState({ providers: [], isLoading: false, hasError: true });
         }
       });
     return () => {

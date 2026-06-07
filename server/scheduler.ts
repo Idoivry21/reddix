@@ -57,11 +57,6 @@ export function createScheduler(options: SchedulerOptions) {
     return from + safeInterval + jitter;
   }
 
-  /** Legacy Date-returning helper retained for callers/tests. */
-  function nextRunAt(intervalMs: number, fromDate = new Date(now())): Date {
-    return new Date(computeNextRunAt(intervalMs, fromDate.getTime()));
-  }
-
   async function acquireRunSlot(): Promise<void> {
     if (activeRuns < maxConcurrentRuns) {
       activeRuns += 1;
@@ -71,6 +66,11 @@ export function createScheduler(options: SchedulerOptions) {
   }
 
   function releaseRunSlot(): void {
+    // Hand the freed slot straight to the next waiter WITHOUT touching activeRuns:
+    // a waiter took its slot via the wait path and never incremented the counter
+    // itself, so the count is already correct for it. Only decrement when the
+    // queue is empty and the slot truly frees up. This asymmetry is what keeps
+    // activeRuns ≤ maxConcurrentRuns.
     const next = waiters.shift();
     if (next) {
       next();
@@ -206,7 +206,6 @@ export function createScheduler(options: SchedulerOptions) {
   return {
     triggerNow,
     triggerDue,
-    nextRunAt,
     register,
     unregister,
     getNextRunAt,

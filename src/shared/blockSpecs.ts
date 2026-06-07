@@ -1,5 +1,10 @@
 import type { BlockSpec, FieldOption } from './types';
 
+// Per-fetch result-count bounds, shared by every source block's limit/maxCount
+// field so the cap is single-sourced and self-documenting.
+const MIN_FETCH_LIMIT = 1;
+const MAX_FETCH_LIMIT = 1000;
+
 const socialArrayPort = { id: 'items', label: 'Items', type: 'SocialItem[]' as const };
 const detailPort = { id: 'detail', label: 'Detail', type: 'DetailObject' as const };
 const artifactPort = { id: 'artifact', label: 'Artifact', type: 'FileArtifact' as const };
@@ -18,7 +23,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P0',
     description: 'Search Reddit posts and comments with compact JSON output.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'rdt' },
+    executable: 'rdt',
     fields: [
       { key: 'query', label: 'Query', type: 'text', required: true },
       { key: 'subreddit', label: 'Subreddit', type: 'text' },
@@ -34,7 +39,7 @@ export const blockSpecs: BlockSpec[] = [
         type: 'select',
         options: redditTimeRangeOptions
       },
-      { key: 'limit', label: 'Limit', type: 'number', min: 1, max: 1000 }
+      { key: 'limit', label: 'Limit', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT }
     ],
     defaultSettings: {
       query: 'CLI tools',
@@ -52,12 +57,12 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Browse a subreddit listing.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'rdt' },
+    executable: 'rdt',
     fields: [
       { key: 'subreddit', label: 'Subreddit', type: 'text', required: true },
       { key: 'sort', label: 'Sort', type: 'select', options: redditSortOptions },
       { key: 'timeRange', label: 'Time Range', type: 'select', options: redditTimeRangeOptions },
-      { key: 'limit', label: 'Limit', type: 'number', min: 1, max: 1000 }
+      { key: 'limit', label: 'Limit', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT }
     ],
     defaultSettings: { subreddit: 'localdev', sort: 'hot', timeRange: 'day', limit: 50 }
   },
@@ -69,10 +74,10 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read Reddit popular or all listings.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'rdt' },
+    executable: 'rdt',
     fields: [
       { key: 'listing', label: 'Listing', type: 'select', options: options(['popular', 'all']) },
-      { key: 'limit', label: 'Limit', type: 'number', min: 1, max: 1000 }
+      { key: 'limit', label: 'Limit', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT }
     ],
     defaultSettings: { listing: 'popular', limit: 50 }
   },
@@ -84,7 +89,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read a Reddit post by stable ID.',
     ports: { input: [socialArrayPort], output: [detailPort] },
-    command: { executable: 'rdt' },
+    executable: 'rdt',
     fields: [
       { key: 'postId', label: 'Post ID', type: 'text', required: true },
       { key: 'expandMore', label: 'Expand More', type: 'boolean' }
@@ -99,11 +104,11 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P0',
     description: 'Search X/Twitter and return structured tweet results.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
       { key: 'query', label: 'Query', type: 'text', required: true },
       { key: 'tab', label: 'Tab', type: 'select', options: twitterSearchTabOptions },
-      { key: 'maxCount', label: 'Max Count', type: 'number', min: 1, max: 1000 },
+      { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'language', label: 'Language', type: 'text' },
       { key: 'fromUser', label: 'From User', type: 'text' },
       { key: 'since', label: 'Since', type: 'text' },
@@ -131,10 +136,10 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read the For You or Following timeline.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
       { key: 'timeline', label: 'Timeline', type: 'select', options: twitterTimelineOptions },
-      { key: 'maxCount', label: 'Max Count', type: 'number', min: 1, max: 1000 },
+      { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
     defaultSettings: { timeline: 'following', maxCount: 50, fullText: true }
@@ -147,9 +152,9 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read authenticated X/Twitter bookmarks.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
-      { key: 'maxCount', label: 'Max Count', type: 'number', min: 1, max: 1000 },
+      { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
     defaultSettings: { maxCount: 50, fullText: true }
@@ -162,10 +167,10 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read posts by handle.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
       { key: 'handle', label: 'Handle', type: 'text', required: true },
-      { key: 'maxCount', label: 'Max Count', type: 'number', min: 1, max: 1000 },
+      { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
     defaultSettings: { handle: 'public_cli', maxCount: 50, fullText: true }
@@ -178,7 +183,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read an X/Twitter list timeline.',
     ports: { input: [], output: [socialArrayPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
       { key: 'listId', label: 'List ID', type: 'text', required: true },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
@@ -193,7 +198,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read a single tweet by ID or URL.',
     ports: { input: [socialArrayPort], output: [detailPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
       { key: 'tweetIdOrUrl', label: 'Tweet ID or URL', type: 'text', required: true },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
@@ -208,7 +213,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read X/Twitter user metadata.',
     ports: { input: [socialArrayPort], output: [detailPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [{ key: 'handle', label: 'Handle', type: 'text', required: true }],
     defaultSettings: { handle: '' }
   },
@@ -220,7 +225,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Read an X/Twitter article by ID or URL.',
     ports: { input: [socialArrayPort], output: [detailPort] },
-    command: { executable: 'twitter' },
+    executable: 'twitter',
     fields: [
       { key: 'articleIdOrUrl', label: 'Article ID or URL', type: 'text', required: true },
       { key: 'format', label: 'Format', type: 'select', options: options(['json', 'markdown']) }
@@ -235,7 +240,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P0',
     description: 'Cap result count.',
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
-    fields: [{ key: 'limit', label: 'Limit', type: 'number', required: true, min: 1 }],
+    fields: [{ key: 'limit', label: 'Limit', type: 'number', required: true, min: MIN_FETCH_LIMIT }],
     defaultSettings: { limit: 100 }
   },
   {

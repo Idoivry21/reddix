@@ -1,6 +1,8 @@
-# Social CLI Canvas Automation — Design Spec (v2)
+# Social CLI Canvas Automation — Design Spec (v2.1)
 
 > **Working name:** `Reddix`. Flagged as an open question — the name reads as Reddit-only, but V1 is explicitly dual-provider (Reddit **and** X/Twitter) with near-parity. See [Open Questions](#open-questions).
+>
+> **Implementation status (2026-06-07):** the shipped app uses a bespoke DOM/SVG canvas in `src/components/Canvas.tsx`, not React Flow / `@xyflow/react`. The current starter flow is **Weekly market digest** with Reddit and X/Twitter branches, and HTML reports have shipped as a P1 output.
 
 ## Summary
 
@@ -40,11 +42,11 @@ The primary (and only) screen is a canvas-first workbench:
 
 - **Top bar:** app name, current flow name, save status, Run Now, Schedule, Export, and per-CLI health/auth indicators.
 - **Left palette:** draggable blocks grouped by provider, then Sources, Enrichment, Transform, Output, Utility. Includes a palette search/filter box.
-- **Center canvas:** freeform drag-and-drop node canvas with visible connections, selection states, pan/zoom, fit-to-view, and a minimap for large graphs.
+- **Center canvas:** freeform drag-and-drop node canvas with visible connections, selection states, pan/zoom, and fit-to-view controls.
 - **Right inspector:** settings for the selected block or flow, with inline validation messages and a live **command preview** (secrets redacted).
 - **Bottom console:** generated CLI command trace, run logs, parsed output preview, and run-history tabs.
 
-The UI should read as a practical automation tool, not a landing page. First load opens directly into the workbench with a useful starter flow: **Search Reddit → Limit/Filter → Export JSON.** A template menu offers an X/Twitter starter: **Search Tweets → Engagement Filter → Export CSV.**
+The UI should read as a practical automation tool, not a landing page. First load opens directly into the workbench with the **Weekly market digest** starter flow: Reddit and X/Twitter sources feed filters, merge, sort, limit, then export CSV and JSON. A template menu can still add more focused provider-specific starters later.
 
 ### Canvas interactions (table stakes — do not defer)
 
@@ -54,6 +56,8 @@ A node editor is unusable without these, so they are P0, not polish:
 - **Undo/redo** for add/move/connect/delete/edit (Ctrl/Cmd-Z / Shift-Z).
 - Keyboard shortcuts for run, save, delete, fit-to-view.
 - Connection validation on drag: incompatible ports reject the edge with a reason.
+
+Implementation note: current code supports add/select/drag/connect, duplicate/delete, pan/zoom, fit-to-view, keyboard palette focus, and mobile read-only enforcement. Multi-select, copy/paste, undo/redo, and minimap remain design targets rather than current shipped behavior.
 
 ### States to design beyond first load
 
@@ -98,6 +102,7 @@ Each block has typed input/output ports (see [Port types](#port-types-and-connec
 - **Export JSON** *(P0)* — writes normalized results to a local JSON file.
 - **Export CSV** *(P0)* — writes normalized results to a local CSV file.
 - **Export Markdown** *(P1)* — writes a human-readable digest grouped by platform/source.
+- **Export HTML Report** *(P1, shipped)* — writes a styled, self-contained browser-readable report and exposes an in-app "Open report" link.
 
 **Utility**
 - **Note** *(P1)* — canvas-only annotation.
@@ -217,7 +222,7 @@ Make failures concrete:
 A React + Vite + TypeScript frontend (the repo is empty and the surface is a complex interactive web app), with a small local Node backend in the same project to run the CLIs, expose flow/run APIs, and manage local schedules.
 
 **Frontend**
-- React Flow for the canvas / node graph and drag-drop.
+- Bespoke DOM/SVG canvas for the node graph and drag-drop (no React Flow / `@xyflow` dependency).
 - A lightweight in-repo component/style system.
 - Local state for active canvas interaction, backed by API persistence for flows and runs.
 
@@ -232,14 +237,14 @@ A React + Vite + TypeScript frontend (the repo is empty and the surface is a com
 
 Written so each is independently testable.
 
-- [ ] App opens to the canvas workbench with the Reddit starter flow pre-loaded.
+- [ ] App opens to the canvas workbench with the dual-provider Weekly market digest starter flow pre-loaded.
 - [ ] Palette shows both Reddit and X/Twitter provider sections and supports search/filter.
 - [ ] User can drag a block to the canvas, connect it, select it, and edit settings in the inspector.
 - [ ] Connecting incompatible ports is rejected with a stated reason.
 - [ ] Undo/redo, multi-select, delete, and duplicate work on canvas nodes.
 - [ ] Run Now validates the graph, executes generated commands via the backend, and streams step logs to the console.
 - [ ] Parsed results appear in the output preview after a successful run.
-- [ ] JSON, CSV, and Markdown exports write local artifacts and display their resolved paths; repeated runs do not overwrite each other.
+- [ ] JSON, CSV, Markdown, and HTML report exports write local artifacts and display their resolved paths; repeated runs do not overwrite each other.
 - [ ] Save a flow, restart the app, and the same nodes, edges, settings, and positions reload.
 - [ ] Configure a schedule, see the next-run time, pause/resume, and view scheduled run history while the backend runs.
 - [ ] Missing CLIs, invalid settings, command failures, parse failures, auth failures, rate limits, and cycles each produce a clear UI error.
@@ -277,7 +282,7 @@ Given/When/Then for the higher-risk paths:
 Genuinely unresolved; tagged with who should weigh in.
 
 - **Naming** *(product)* — `Reddix` reads as Reddit-only. Options: keep it and accept the mismatch, or pick a provider-neutral name (e.g., a "social CLI workbench" identity). Decide before any user-facing branding lands.
-- **Mobile scope** *(product/design)* — recommend de-scoping canvas *editing* on mobile to a read-only run/monitor view. Confirm this is acceptable for V1 rather than attempting touch authoring.
+- **Mobile scope** *(resolved)* — mobile is read-only run/monitor. Canvas editing is desktop-only for V1.
 - **Auto-pagination depth** *(eng)* — when cursors are added (P1), what's the max pages/items a single run may fetch, to bound request volume?
 - **Flow import/export** *(product)* — should a flow be exportable/importable as a JSON file in V1 for sharing/backup, or is that P1? (Cheap given the persisted shape already exists.)
 - **rdt index cache** *(eng)* — `rdt-cli` caches the latest listing for `rdt show <N>`. Confirm the wrapper always reads via stable IDs (`rdt read <post_id>`) and never relies on positional `show`, which is order-sensitive across runs.

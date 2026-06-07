@@ -22,19 +22,15 @@ import {
 } from '../flowTypes';
 import { createBlockNode } from '../flowFactory';
 import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
-import { capLogs, runRecordToConsoleState, runsToHistoryEntries, runStepToConsoleStep } from '../runConsole';
+import { byStartedAtDesc, capLogs, MAX_HISTORY_ENTRIES, runRecordToConsoleState, runsToHistoryEntries, toConsoleStep } from '../runConsole';
 import { createSampleEdges, createSampleNodes, SAMPLE_FLOW_NAME } from '../sampleFlow';
 import { cronToIntervalMs } from '../scheduleCadence';
 import { CANVAS_GEOMETRY, DEFAULT_NODE_SIZE } from '../canvasGeometry';
 import type { SavedSchedule } from '../components/ScheduleModal';
 import type { FlowSummary } from '../components/Dashboard';
 import { accentForBlock, type AccentKey } from '../blockVisuals';
-import type { PersistedFlow } from '../shared/types';
-import { useToasts } from './useToasts';
-
-const MAX_HISTORY = 50;
-
-export type { WorkbenchNode } from '../flowTypes';
+import type { PersistedFlow, RunRecord } from '../shared/types';
+import { useToasts, type ToastKind } from './useToasts';
 
 const INITIAL_VIEW: CanvasView = { x: 60, y: 40, k: 0.72 };
 
@@ -232,8 +228,7 @@ export function useWorkbenchState() {
   useEffect(() => {
     const id = window.setTimeout(fitView, CANVAS_GEOMETRY.fitDelayMs.mount);
     return () => window.clearTimeout(id);
-    // Run once on mount to frame the sample flow.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Run once on mount to frame the sample flow (fitView intentionally omitted from deps).
   }, []);
 
   // ----- live run-step updates over SSE -----
@@ -255,7 +250,7 @@ export function useWorkbenchState() {
         if (!step || !isRunningRef.current) {
           return;
         }
-        const consoleStep = runStepToConsoleStep(step, nodeTypeByIdRef.current[step.blockId]);
+        const consoleStep = toConsoleStep(step, nodeTypeByIdRef.current[step.blockId]);
         setConsoleState((current) => ({ ...current, steps: upsertStep(current.steps, consoleStep) }));
         setNodeStatus(step.blockId, nodeStatusFromStep(step.status));
       },
@@ -291,8 +286,7 @@ export function useWorkbenchState() {
 
   useEffect(() => {
     loadHistory(DEFAULT_FLOW_ID);
-    // Load persisted history once on mount for the initial sample flow.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Load persisted history once on mount for the initial sample flow (loadHistory intentionally omitted from deps).
   }, []);
 
   // Live run progress for the console head: completed vs total steps.
@@ -343,22 +337,10 @@ export function useWorkbenchState() {
       }
       setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeByIdRef.current));
       setNodes((current) => applyRunStatuses(current, run));
-      const ok = run.status === 'success';
-      const hasFailedStep = run.steps.some((step) => step.status === 'failed');
-      const rowCount = run.sample?.length ?? 0;
-      const failedCount = run.steps.filter((step) => step.status === 'failed').length;
-      setValidationMessage(ok ? 'Run completed' : 'Run finished with errors');
-      setRunStatus(
-        ok
-          ? { kind: 'success', message: 'Run completed successfully' }
-          : { kind: hasFailedStep ? 'error' : 'warning', message: 'Run finished with errors' }
-      );
-      pushToast(
-        ok
-          ? `Run complete — ${rowCount} row${rowCount === 1 ? '' : 's'}`
-          : `Run finished with ${failedCount} failed step${failedCount === 1 ? '' : 's'}`,
-        ok ? 'success' : hasFailedStep ? 'error' : 'warning'
-      );
+      const summary = summarizeRun(run);
+      setValidationMessage(summary.validationMessage);
+      setRunStatus(summary.runStatus);
+      pushToast(summary.toast.text, summary.toast.level);
     } catch (error) {
       if (runToken.current !== token) {
         return;
@@ -561,9 +543,11 @@ function mergeHistory(loaded: ConsoleHistoryEntry[], session: ConsoleHistoryEntr
     seen.add(entry.id);
     merged.push(entry);
   }
-  return merged.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, MAX_HISTORY);
+  return merged.sort(byStartedAtDesc).slice(0, MAX_HISTORY_ENTRIES);
 }
 
+// Reverse of flowSerialization.toFlowNode: maps the persisted `node.type` back to
+// the UI's `blockType`. The two names are an intentional boundary (see toFlowNode).
 function rehydrateNodes(flow: PersistedFlow): WorkbenchNode[] {
   return flow.nodes.map((node) => {
     const position = flow.nodePositions[node.id] ?? { x: 0, y: 0 };
@@ -626,6 +610,38 @@ function toFlowSummaries(flows: PersistedFlow[]): FlowSummary[] {
   });
 }
 
+/**
+ * Pure projection of a completed run into the validation message, run status, and
+ * toast the UI shows. Kept out of runNow so the stale-token control flow there
+ * isn't tangled with success/failure message formatting and pluralization.
+ */
+function summarizeRun(run: RunRecord): {
+  validationMessage: string;
+  runStatus: RunStatus;
+  toast: { text: string; level: ToastKind };
+} {
+  const ok = run.status === 'success';
+  const hasFailedStep = run.steps.some((step) => step.status === 'failed');
+  const rowCount = run.sample?.length ?? 0;
+  const failedCount = run.steps.filter((step) => step.status === 'failed').length;
+  return {
+    validationMessage: ok ? 'Run completed' : 'Run finished with errors',
+    runStatus: ok
+      ? { kind: 'success', message: 'Run completed successfully' }
+      : { kind: hasFailedStep ? 'error' : 'warning', message: 'Run finished with errors' },
+    toast: {
+      text: ok
+        ? `Run complete — ${rowCount} row${rowCount === 1 ? '' : 's'}`
+        : `Run finished with ${failedCount} failed step${failedCount === 1 ? '' : 's'}`,
+      level: ok ? 'success' : hasFailedStep ? 'error' : 'warning'
+    }
+  };
+}
+
+// Deliberate domain→UI token mapping, centralized here: the backend/wire status
+// is 'failed' (StepStatus/RunRecord.status), while the canvas NodeStatus uses
+// 'error' for the same outcome. This one function is the single place that bridges
+// the two vocabularies; do not "align" them by editing only one side.
 function nodeStatusFromStep(status: 'success' | 'failed' | 'skipped' | 'running'): NodeStatus {
   if (status === 'failed') {
     return 'error';

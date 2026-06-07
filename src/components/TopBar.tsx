@@ -13,8 +13,8 @@ interface TopBarProps {
   onOpenDashboard?: () => void;
   onOpenSchedule?: () => void;
   providers?: ProviderHealth[];
-  healthLoading?: boolean;
-  healthError?: boolean;
+  isHealthLoading?: boolean;
+  hasHealthError?: boolean;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
   readOnly?: boolean;
@@ -32,8 +32,8 @@ export function TopBar({
   onOpenDashboard,
   onOpenSchedule,
   providers = [],
-  healthLoading = false,
-  healthError = false,
+  isHealthLoading = false,
+  hasHealthError = false,
   theme = 'light',
   onToggleTheme,
   readOnly = false
@@ -69,7 +69,7 @@ export function TopBar({
 
       <div className="topbar-spacer" />
 
-      <ProviderHealthPills providers={providers} loading={healthLoading} error={healthError} />
+      <ProviderHealthPills providers={providers} loading={isHealthLoading} error={hasHealthError} />
 
       <RunStatusBar status={runStatus} />
 

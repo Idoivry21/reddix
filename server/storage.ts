@@ -5,6 +5,7 @@ import { createKeyedMutex } from './keyedMutex';
 import type { EventLogger } from './logger';
 import { safeSegmentPath } from './safeId';
 import type { PersistedFlow, Preferences, RunRecord } from './types';
+import { isRecord } from '../src/shared/values';
 
 interface StorageOptions {
   baseDir: string;
@@ -165,6 +166,3 @@ async function syncDirectory(dir: string): Promise<void> {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}

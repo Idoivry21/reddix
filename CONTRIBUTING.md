@@ -8,12 +8,14 @@ third-party CLIs.
 
 ```bash
 npm install
+cp .env.example .env   # optional; defaults work for local development
 npm run dev:server
 npm run dev
 ```
 
-Open http://127.0.0.1:5173. Optional `rdt` and `twitter` binaries can be on
-your `PATH`; the app runs without them and reports missing provider health.
+Use Node.js 20.19+ or 22.12+. Open http://127.0.0.1:5173. Optional `rdt` and
+`twitter` binaries can be on your `PATH`; the app runs without them and reports
+missing provider health.
 
 ## Before Opening a Pull Request
 
@@ -38,10 +40,15 @@ Every code change must preserve these rules:
    redaction helpers for every persisted or user-visible command/run field.
 3. Scheduling must not bypass the underlying CLIs' own throttling or the app's
    local rate limits.
+4. Artifact paths must stay inside `REDDIX_DATA_DIR/artifacts`, including the
+   served `/api/artifacts/*` route. Reject traversal and symlink escapes.
+5. HTML reports render fetched social content, so escape text, allow only
+   `http(s)` links, and preserve the report CSP.
 
 Add or update tests whenever a change touches command construction, flow
 validation, storage paths, run records, scheduling, logging, exports, or auth
-handling.
+handling. Use `tests/htmlReport.test.ts` and `tests/artifactServe.test.ts` as
+the reference patterns for report/export safety.
 
 ## Dependency Changes
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runRecordToConsoleState, runStepToConsoleStep } from '../src/runConsole';
+import { runRecordToConsoleState, toConsoleStep } from '../src/runConsole';
 import type { ConsoleState } from '../src/api';
 import type { RunRecord } from '../src/shared/types';
 
@@ -58,13 +58,13 @@ describe('runRecordToConsoleState', () => {
     const withSample: RunRecord = {
       ...run,
       sample: [
-        { kind: 'reddit', id: 'p1', title: 'Hello', author: 'bob', score: 12, created: '2026-06-06T15:00:00.000Z', url: 'https://example.com/p1' }
+        { platform: 'reddit', id: 'p1', title: 'Hello', author: 'bob', score: 12, created: '2026-06-06T15:00:00.000Z', url: 'https://example.com/p1' }
       ]
     };
     const state = runRecordToConsoleState(withSample, prev, nodeTypeById);
 
     expect(state.results).toHaveLength(1);
-    expect(state.results[0]).toMatchObject({ kind: 'reddit', title: 'Hello', score: 12, url: 'https://example.com/p1' });
+    expect(state.results[0]).toMatchObject({ platform: 'reddit', title: 'Hello', score: 12, url: 'https://example.com/p1' });
   });
 
   it('leaves results empty when the run carries no sample', () => {
@@ -106,15 +106,15 @@ describe('runRecordToConsoleState', () => {
   });
 });
 
-describe('runStepToConsoleStep', () => {
+describe('toConsoleStep', () => {
   it('maps a single run step using the resolved block label', () => {
-    const consoleStep = runStepToConsoleStep(run.steps[0], 'reddit.searchPosts');
+    const consoleStep = toConsoleStep(run.steps[0], 'reddit.searchPosts');
 
     expect(consoleStep).toMatchObject({ id: 'search', label: 'Search Reddit', status: 'success' });
   });
 
   it('falls back to the block id when the type is unknown', () => {
-    const consoleStep = runStepToConsoleStep(run.steps[0], undefined);
+    const consoleStep = toConsoleStep(run.steps[0], undefined);
 
     expect(consoleStep).toMatchObject({ id: 'search', label: 'search', sublabel: '' });
   });

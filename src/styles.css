@@ -647,6 +647,8 @@ textarea:focus-visible,
 }
 .edges-svg {
   position: absolute;
+  /* Overdraw margin so wires stay drawable beyond the viewport. Must match
+     EDGE_CANVAS_OVERDRAW (4000) in Canvas.tsx: inset = -OVERDRAW, size = 2*OVERDRAW. */
   inset: -4000px;
   width: 8000px;
   height: 8000px;

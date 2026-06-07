@@ -1,27 +1,43 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeCard } from './NodeCard';
+import { Icon } from '../icons';
 import { getBlockSpec } from '../shared/commandBuilders';
 import { canConnect } from '../shared/graph';
-import { accentForBlock } from '../blockVisuals';
+import { accentForBlock, type AccentKey } from '../blockVisuals';
 import { CANVAS_GEOMETRY, edgePath, nodePorts, type PortPoint } from '../canvasGeometry';
 import type { CanvasView, NodeSize, WorkbenchEdge, WorkbenchNode } from '../flowTypes';
+import { BLOCK_DRAG_MIME } from '../dragMime';
 
-const BLOCK_DRAG_MIME = 'application/reddix-block';
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2;
 const GRID_SPACING = 22;
 const VIEW_ANIM_MS = 300;
+// Margin (px) by which the edges SVG overdraws the canvas so wires stay drawable
+// outside the viewport. The SVG is offset by -OVERDRAW and its content group is
+// translated by +OVERDRAW to cancel; both must use this one value. Mirrored by
+// the `.edges-svg` inset/size rules in styles.css.
+const EDGE_CANVAS_OVERDRAW = 4000;
+// Port hover-highlight box size (px), centered on the port point.
+const PORT_TARGET_SIZE = 22;
+// Pointer travel (Manhattan px) under which a pan gesture counts as a click.
+const PAN_CLICK_THRESHOLD_PX = 3;
+// Edge-delete glyph: circle radius and the half-extent of its X cross.
+const EDGE_DELETE_RADIUS = 9;
+const EDGE_DELETE_CROSS = 3.5;
+// Fallback accent when a node id is missing from the accent map.
+const DEFAULT_ACCENT: AccentKey = 'utility';
 
 // Category accent hexes (theme-stable: the base accents don't flip in dark mode)
-// used to build per-edge source→target gradients.
-const ACCENT_HEX: Record<string, string> = {
+// used to build per-edge source→target gradients. Keyed by AccentKey so the
+// compiler forces an entry for every accent bucket (single source of truth).
+const ACCENT_HEX: Record<AccentKey, string> = {
   reddit: '#ff4500',
   x: '#1b8fe0',
   transform: '#6e56cf',
   output: '#1e9e6a',
   utility: '#8a8577'
 };
-const ACCENT_KEYS = Object.keys(ACCENT_HEX);
+const ACCENT_KEYS = Object.keys(ACCENT_HEX) as AccentKey[];
 
 interface CanvasProps {
   nodes: WorkbenchNode[];
@@ -158,7 +174,7 @@ export function Canvas(props: CanvasProps) {
       if (state.mode === 'pan') {
         const nx = state.ox + (event.clientX - state.startX);
         const ny = state.oy + (event.clientY - state.startY);
-        if (Math.abs(event.clientX - state.startX) + Math.abs(event.clientY - state.startY) > 3) {
+        if (Math.abs(event.clientX - state.startX) + Math.abs(event.clientY - state.startY) > PAN_CLICK_THRESHOLD_PX) {
           state.moved = true;
         }
         setView((current) => ({ ...current, x: nx, y: ny }));
@@ -179,23 +195,28 @@ export function Canvas(props: CanvasProps) {
       }
     };
 
+    // Finish a wire drag: if released over an input port on a different node,
+    // commit the connection; either way clear the in-progress wire UI.
+    const commitWire = (from: string, fromPort: string, event: PointerEvent): void => {
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const portEl = element?.closest('[data-role="port-in"]');
+      if (portEl) {
+        const toNode = portEl.getAttribute('data-node')!;
+        const toPort = portEl.getAttribute('data-port')!;
+        if (toNode !== from) {
+          onConnect(from, fromPort, toNode, toPort);
+        }
+      }
+      setTemp(null);
+      setHoverPort(null);
+      setConnecting(false);
+    };
+
     const up = (event: PointerEvent): void => {
       const state = drag.current;
       if (state?.mode === 'wire') {
-        const element = document.elementFromPoint(event.clientX, event.clientY);
-        const portEl = element?.closest('[data-role="port-in"]');
-        if (portEl) {
-          const toNode = portEl.getAttribute('data-node')!;
-          const toPort = portEl.getAttribute('data-port')!;
-          if (toNode !== state.from) {
-            onConnect(state.from, state.fromPort, toNode, toPort);
-          }
-        }
-        setTemp(null);
-        setHoverPort(null);
-        setConnecting(false);
-      }
-      if (state?.mode === 'pan' && !state.moved) {
+        commitWire(state.from, state.fromPort, event);
+      } else if (state?.mode === 'pan' && !state.moved) {
         onPaneClick();
       }
       drag.current = null;
@@ -298,7 +319,7 @@ export function Canvas(props: CanvasProps) {
           const spec = getBlockSpec(node.blockType);
           return [node.id, accentForBlock(spec.provider, spec.category)];
         })
-      ) as Record<string, string>,
+      ) as Record<string, AccentKey>,
     [nodes]
   );
 
@@ -335,7 +356,7 @@ export function Canvas(props: CanvasProps) {
       onDrop={onDrop}
     >
       <div ref={panRef} className="canvas-pan" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
-        <svg className="edges-svg" style={{ left: -4000, top: -4000 }}>
+        <svg className="edges-svg" style={{ left: -EDGE_CANVAS_OVERDRAW, top: -EDGE_CANVAS_OVERDRAW }}>
           <defs>
             {ACCENT_KEYS.flatMap((src) =>
               ACCENT_KEYS.map((tgt) => (
@@ -346,7 +367,7 @@ export function Canvas(props: CanvasProps) {
               ))
             )}
           </defs>
-          <g transform="translate(4000,4000)">
+          <g transform={`translate(${EDGE_CANVAS_OVERDRAW},${EDGE_CANVAS_OVERDRAW})`}>
             {edges.map((edge) => {
               const sourcePoint = portPointById(edge.source, edge.sourcePortId, 'out');
               const targetPoint = portPointById(edge.target, edge.targetPortId, 'in');
@@ -358,8 +379,8 @@ export function Canvas(props: CanvasProps) {
               const isSelected = selectedEdgeId === edge.id;
               const isHover = hoverEdge === edge.id;
               const mid = { x: (sourcePoint.x + targetPoint.x) / 2, y: (sourcePoint.y + targetPoint.y) / 2 };
-              const srcAccent = accentById[edge.source] ?? 'utility';
-              const tgtAccent = accentById[edge.target] ?? 'utility';
+              const srcAccent = accentById[edge.source] ?? DEFAULT_ACCENT;
+              const tgtAccent = accentById[edge.target] ?? DEFAULT_ACCENT;
               const stroke = `url(#edge-grad-${srcAccent}-${tgtAccent})`;
               return (
                 <g key={edge.id}>
@@ -411,9 +432,9 @@ export function Canvas(props: CanvasProps) {
                         setHoverEdge(null);
                       }}
                     >
-                      <circle r="9" />
-                      <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" />
-                      <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" />
+                      <circle r={EDGE_DELETE_RADIUS} />
+                      <line x1={-EDGE_DELETE_CROSS} y1={-EDGE_DELETE_CROSS} x2={EDGE_DELETE_CROSS} y2={EDGE_DELETE_CROSS} />
+                      <line x1={EDGE_DELETE_CROSS} y1={-EDGE_DELETE_CROSS} x2={-EDGE_DELETE_CROSS} y2={EDGE_DELETE_CROSS} />
                     </g>
                   ) : null}
                 </g>
@@ -427,7 +448,7 @@ export function Canvas(props: CanvasProps) {
           <NodeCard
             key={node.id}
             node={node}
-            selected={selectedNodeId === node.id}
+            isSelected={selectedNodeId === node.id}
             onMeasure={onMeasure}
             onSelect={onSelectNode}
           />
@@ -454,7 +475,13 @@ export function Canvas(props: CanvasProps) {
               return (
                 <div
                   className={`port-target ${valid ? 'ok' : 'bad'}`}
-                  style={{ position: 'absolute', left: point.x - 11, top: point.y - 11, width: 22, height: 22 }}
+                  style={{
+                    position: 'absolute',
+                    left: point.x - PORT_TARGET_SIZE / 2,
+                    top: point.y - PORT_TARGET_SIZE / 2,
+                    width: PORT_TARGET_SIZE,
+                    height: PORT_TARGET_SIZE
+                  }}
                 />
               );
             })()
@@ -486,15 +513,11 @@ export function Canvas(props: CanvasProps) {
 
       <div className="canvas-toolbar">
         <button className="tool-btn" title="Zoom out" onClick={() => zoomToCenter(CANVAS_GEOMETRY.toolbarZoom.out)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M5 12h14" />
-          </svg>
+          <Icon name="minus" />
         </button>
         <span className="zoom-val">{Math.round(view.k * 100)}%</span>
         <button className="tool-btn" title="Zoom in" onClick={() => zoomToCenter(CANVAS_GEOMETRY.toolbarZoom.in)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+          <Icon name="plus" />
         </button>
         <div className="toolbar-sep" />
         <button

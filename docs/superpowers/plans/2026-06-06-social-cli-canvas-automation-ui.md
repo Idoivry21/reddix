@@ -4,9 +4,11 @@
 
 **Goal:** Build the V1 local canvas workbench for Reddit and X/Twitter CLI research/export flows.
 
-**Architecture:** A React + Vite + TypeScript frontend renders the canvas-first workbench with React Flow. A local Express backend owns CLI health checks, safe argv command builders, run execution, SSE logs, local JSON persistence, exports, and an in-memory scheduler. Shared TypeScript modules define block specs, graph validation, normalized social items, redaction, filtering, exports, and persistence shapes.
+**Status:** Implemented on `main` as of 2026-06-07. The checklist below is preserved as the original worker plan; current implementation notes override stale planning assumptions.
 
-**Tech Stack:** React, Vite, TypeScript, @xyflow/react, Express, Vitest, Testing Library, Playwright.
+**Architecture:** A React + Vite + TypeScript frontend renders the canvas-first workbench with a bespoke DOM/SVG canvas. A local Express backend owns CLI health checks, safe argv command builders, run execution, SSE logs, local JSON persistence, exports, artifact serving, and an in-memory scheduler. Shared TypeScript modules define block specs, graph validation, normalized social items, redaction, filtering, exports, HTML reports, and persistence shapes.
+
+**Tech Stack:** React, Vite, TypeScript, Express, Vitest, Testing Library, Playwright.
 
 ---
 
@@ -25,7 +27,7 @@
 - Create: `tests/setup.ts`
 
 - [ ] Create the Vite/React/TypeScript project files with scripts: `dev`, `dev:server`, `build`, `test`, `test:run`, `lint`, and `start`.
-- [ ] Install dependencies: React, Vite, TypeScript, @xyflow/react, Express, cors, zod, nanoid, Vitest, Testing Library, jsdom, Playwright.
+- [ ] Install dependencies: React, Vite, TypeScript, Express, cors, zod, nanoid, lucide-react, Vitest, Testing Library, jsdom, Playwright.
 - [ ] Run `npm test -- --run` and verify the test harness starts.
 - [ ] Commit scaffold with message `chore: scaffold social cli workbench`.
 
@@ -91,13 +93,16 @@
 - Create: `src/components/BlockNode.tsx`
 - Create: `src/components/Inspector.tsx`
 - Create: `src/components/ConsolePanel.tsx`
-- Create: `src/components/SchedulePanel.tsx`
+- Create: `src/components/ScheduleModal.tsx`
+- Create: `src/components/Dashboard.tsx`
+- Create: `src/components/RunStatusBar.tsx`
+- Create: `src/components/ToastViewport.tsx`
 - Create: `src/hooks/useFlowState.ts`
 - Create: `src/api.ts`
 - Modify: `src/App.tsx`
 - Modify: `src/styles.css`
 
-- [ ] Implement the layout from the generated concept: top bar, provider palette, React Flow canvas with starter nodes, inspector, bottom console, minimap, and controls.
+- [ ] Implement the layout from the generated concept: top bar, provider palette, bespoke canvas with starter nodes, inspector, bottom console, and controls.
 - [ ] Implement drag/drop from palette, valid connections, selection, settings edits, delete, duplicate, copy/paste, undo/redo, keyboard shortcuts, save, run, schedule controls, and output preview.
 - [ ] Implement missing CLI/auth/error/loading/empty states from the spec.
 - [ ] Keep mobile to monitor/read-only behavior; desktop authoring remains primary.

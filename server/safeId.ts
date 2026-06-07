@@ -41,13 +41,19 @@ export function assertSafeId(id: unknown): string {
  * `baseDir`. Throws on any path that escapes (e.g. `../`, absolute paths).
  * Used for export artifacts whose names come from user-controlled settings.
  */
+/** True if `resolvedTarget` is `resolvedBase` itself or sits under it. The single
+ * containment rule both path guards share — fix a traversal edge case here once. */
+function isWithinBase(resolvedTarget: string, resolvedBase: string): boolean {
+  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + path.sep);
+}
+
 export function resolveContainedPath(baseDir: string, relativePath: string): string {
   if (typeof relativePath !== 'string' || relativePath.length === 0 || relativePath.includes('\0')) {
     throw new Error('Invalid path');
   }
   const resolvedBase = path.resolve(baseDir);
   const resolvedTarget = path.resolve(resolvedBase, relativePath);
-  if (resolvedTarget !== resolvedBase && !resolvedTarget.startsWith(resolvedBase + path.sep)) {
+  if (!isWithinBase(resolvedTarget, resolvedBase)) {
     throw new Error(`Invalid path: ${JSON.stringify(relativePath)} escapes the base directory`);
   }
   return resolvedTarget;
@@ -63,7 +69,7 @@ export function safeSegmentPath(dir: string, id: unknown, suffix = ''): string {
   const filePath = path.join(dir, `${safeId}${suffix}`);
   const resolvedBase = path.resolve(dir);
   const resolvedFile = path.resolve(filePath);
-  if (resolvedFile !== resolvedBase && !resolvedFile.startsWith(resolvedBase + path.sep)) {
+  if (!isWithinBase(resolvedFile, resolvedBase)) {
     throw new Error(`Invalid id: ${JSON.stringify(safeId)} escapes the base directory`);
   }
   return filePath;

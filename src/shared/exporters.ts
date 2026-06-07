@@ -1,3 +1,4 @@
+import { PROVIDER_META } from './providers';
 import type { SocialItem } from './types';
 
 const csvColumns = [
@@ -54,7 +55,8 @@ export function serializeMarkdown(items: SocialItem[]): string {
   }
 
   const sections = Array.from(groups.entries()).map(([platform, groupItems]) => {
-    const title = platform === 'reddit' ? 'Reddit' : 'X/Twitter';
+    // Use the canonical provider label so exports match the rest of the UI.
+    const title = PROVIDER_META[platform as SocialItem['platform']]?.label ?? platform;
     const lines = groupItems.map((item) => {
       const label = item.title ?? item.body ?? item.id;
       const linked = item.url ? `[${label}](${item.url})` : label;
@@ -88,6 +90,8 @@ function csvCell(value: unknown): string {
     return '';
   }
   const raw = String(value);
+  // CSV formula-injection guard: spreadsheets (Excel/Sheets) execute a cell that
+  // begins with = + - @ (or a tab/CR variant). Prefix such cells with ' to neutralize.
   const text = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
   if (/[",\n]/.test(text)) {
     return `"${text.replace(/"/g, '""')}"`;

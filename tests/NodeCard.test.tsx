@@ -25,7 +25,7 @@ describe('NodeCard status', () => {
   ];
 
   it.each(cases)('renders a non-color status cue for %s', (status, label) => {
-    const { container } = render(<NodeCard node={makeNode(status)} selected={false} onMeasure={vi.fn()} />);
+    const { container } = render(<NodeCard node={makeNode(status)} isSelected={false} onMeasure={vi.fn()} />);
     // Accessible label (not color-only) per WCAG 1.4.1.
     expect(screen.getByLabelText(new RegExp(`Status: ${status}`, 'i'))).toBeInTheDocument();
     expect(screen.getAllByText(label).length).toBeGreaterThan(0);
@@ -33,7 +33,7 @@ describe('NodeCard status', () => {
   });
 
   it('renders the block title, source-coded accent, and summary', () => {
-    const { container } = render(<NodeCard node={makeNode('idle')} selected onMeasure={vi.fn()} />);
+    const { container } = render(<NodeCard node={makeNode('idle')} isSelected onMeasure={vi.fn()} />);
     expect(screen.getByText('Search Reddit')).toBeInTheDocument();
     expect(container.querySelector('.node.cat-reddit')).not.toBeNull();
     expect(container.querySelector('.node.selected')).not.toBeNull();

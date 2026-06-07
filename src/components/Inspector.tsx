@@ -22,14 +22,6 @@ function DuplicateIcon() {
   );
 }
 
-function TrashIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
-    </svg>
-  );
-}
-
 interface InspectorProps {
   node: WorkbenchNode | undefined;
   onSettingChange: (key: string, value: unknown) => void;
@@ -64,7 +56,7 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
   const accent = accentForBlock(spec.provider, spec.category);
   const fields = spec.fields;
   let command: BuiltCommand | null = null;
-  if (spec.command) {
+  if (spec.executable) {
     try {
       command = buildBlockCommand({ blockId: node.id, blockType: node.blockType, settings: node.settings });
     } catch {
@@ -82,7 +74,7 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
           <div className="ihtitle">{spec.label}</div>
           <div className="ihsub">
             {accent === 'x' ? 'X' : accent}
-            {spec.command ? ` · ${spec.command.executable}-cli` : ''}
+            {spec.executable ? ` · ${spec.executable}-cli` : ''}
           </div>
         </div>
       </div>
@@ -102,7 +94,7 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
           />
         ))}
 
-        <CommandPreview command={command} executable={spec.command?.executable} />
+        <CommandPreview command={command} executable={spec.executable} />
 
         {!readOnly ? (
           <div className="field-actions">
@@ -115,7 +107,7 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
               <DuplicateIcon /> Duplicate block
             </button>
             <button type="button" className="btn btn-sm btn-danger" onClick={onDelete}>
-              <TrashIcon /> Delete block
+              <Icon name="trash" size={15} /> Delete block
             </button>
           </div>
         ) : null}

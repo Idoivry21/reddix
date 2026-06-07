@@ -7,7 +7,7 @@ import type { NodeStatus, WorkbenchNode } from '../flowTypes';
 
 interface NodeCardProps {
   node: WorkbenchNode;
-  selected: boolean;
+  isSelected: boolean;
   onMeasure: (id: string, w: number, h: number) => void;
   onSelect: (id: string) => void;
 }
@@ -20,7 +20,7 @@ const STATUS_LABEL: Record<NodeStatus, string> = {
   error: 'Error'
 };
 
-export function NodeCard({ node, selected, onMeasure, onSelect }: NodeCardProps) {
+export function NodeCard({ node, isSelected, onMeasure, onSelect }: NodeCardProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const spec = getBlockSpec(node.blockType);
   const accent = accentForBlock(spec.provider, spec.category);
@@ -41,21 +41,21 @@ export function NodeCard({ node, selected, onMeasure, onSelect }: NodeCardProps)
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-    // Re-measure when the rendered content (settings summary) changes height.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Re-measure when the rendered content (settings summary) changes height —
+    // settingsKey stands in for node.settings to keep the dep list primitive.
   }, [node.id, settingsKey, onMeasure]);
 
   return (
     <div
       ref={ref}
-      className={`node cat-${accent} status-${node.status} ${selected ? 'selected' : ''} ${
+      className={`node cat-${accent} status-${node.status} ${isSelected ? 'selected' : ''} ${
         node.status === 'running' ? 'running' : ''
       }`}
       data-role="node"
       data-id={node.id}
       role="button"
       tabIndex={0}
-      aria-pressed={selected}
+      aria-pressed={isSelected}
       aria-label={`${node.label} block — ${STATUS_LABEL[node.status]}`}
       style={{ left: node.x, top: node.y }}
       onKeyDown={(event) => {

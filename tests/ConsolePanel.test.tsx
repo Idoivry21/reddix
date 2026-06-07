@@ -63,7 +63,7 @@ describe('ConsolePanel command trace', () => {
     const state = baseState({
       activeTab: 'Output Preview',
       results: [
-        { kind: 'reddit', id: 'p1', title: 'Hello world', author: 'bob', score: 12, created: '2026-06-06', url: 'https://example.com/p1' }
+        { platform: 'reddit', id: 'p1', title: 'Hello world', author: 'bob', score: 12, created: '2026-06-06', url: 'https://example.com/p1' }
       ]
     });
     render(<ConsolePanel state={state} onTabChange={vi.fn()} />);

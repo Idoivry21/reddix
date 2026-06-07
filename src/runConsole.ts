@@ -2,7 +2,9 @@ import type { ConsoleHistoryEntry, ConsoleRunStep, ConsoleState } from './api';
 import { getBlockSpec } from './shared/commandBuilders';
 import type { RunRecord, RunSampleRow, RunStep } from './shared/types';
 
-const MAX_HISTORY_ENTRIES = 50;
+/** Cap on retained run-history entries. Shared with useWorkbenchState so both the
+ * builder here and the merge there enforce the same bound. */
+export const MAX_HISTORY_ENTRIES = 50;
 const MAX_LOG_LINES = 200;
 
 /** Keep only the most recent MAX_LOG_LINES entries to bound console memory. */
@@ -23,7 +25,6 @@ export function runRecordToConsoleState(
   return {
     ...prev,
     activeTab: 'Logs',
-    command: prev.command,
     runLabel: `Run ${run.startedAt}`,
     steps: run.steps.map((step) => toConsoleStep(step, nodeTypeById[step.blockId])),
     logs: capLogs(buildLogs(run)),
@@ -62,10 +63,16 @@ export function toHistoryEntry(run: RunRecord): ConsoleHistoryEntry {
   };
 }
 
+/** Newest-first comparator over anything with an ISO `startedAt`. Shared so the
+ * persisted-history and session-merge sorts can never order differently. */
+export function byStartedAtDesc(a: { startedAt: string }, b: { startedAt: string }): number {
+  return a.startedAt < b.startedAt ? 1 : -1;
+}
+
 /** Map persisted runs into history entries, newest-first and capped. */
 export function runsToHistoryEntries(runs: RunRecord[]): ConsoleHistoryEntry[] {
   return [...runs]
-    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+    .sort(byStartedAtDesc)
     .slice(0, MAX_HISTORY_ENTRIES)
     .map(toHistoryEntry);
 }
@@ -78,7 +85,7 @@ export function toResultRows(
     return [];
   }
   return sample.map((row) => ({
-    kind: row.kind,
+    platform: row.platform,
     id: row.id,
     title: row.title,
     author: row.author,
@@ -88,11 +95,7 @@ export function toResultRows(
   }));
 }
 
-export function runStepToConsoleStep(step: RunStep, blockType: string | undefined): ConsoleRunStep {
-  return toConsoleStep(step, blockType);
-}
-
-function toConsoleStep(step: RunStep, blockType: string | undefined): ConsoleRunStep {
+export function toConsoleStep(step: RunStep, blockType: string | undefined): ConsoleRunStep {
   const descriptor = describeBlock(blockType, step.blockId);
   return {
     id: step.blockId,
@@ -114,7 +117,7 @@ function describeBlock(blockType: string | undefined, fallbackId: string): { lab
   const spec = getBlockSpec(blockType);
   return {
     label: spec.label,
-    sublabel: spec.command ? `${spec.command.executable} ${spec.provider}` : 'local block'
+    sublabel: spec.executable ? `${spec.executable} ${spec.provider}` : 'local block'
   };
 }
 

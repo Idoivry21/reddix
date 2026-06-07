@@ -1,5 +1,6 @@
 import { PROVIDER_META } from './providers';
 import type { SocialItem } from './types';
+import { coerceFiniteNumber } from './values';
 
 export interface HtmlReportMeta {
   /** Flow name shown in the report header. */
@@ -192,9 +193,7 @@ function imageThumb(media: SocialItem['media']): string {
   return `<img class="card-media" loading="lazy" alt="" src="${escapeHtml(href)}" />`;
 }
 
-function coerceNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
+const coerceNumber = coerceFiniteNumber;
 
 function formatCount(value: number): string {
   // Thresholds are nudged below each round boundary (999_950, not 1_000_000) so a

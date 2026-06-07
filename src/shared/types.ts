@@ -45,9 +45,9 @@ export interface BlockSpec {
   ports: BlockPorts;
   fields: FieldSpec[];
   defaultSettings: Record<string, unknown>;
-  command?: {
-    executable: 'rdt' | 'twitter';
-  };
+  /** Present on CLI-backed blocks only; names the binary and doubles as the
+   * "is this a CLI block" discriminant. Distinct from the built {@link BuiltCommand}. */
+  executable?: 'rdt' | 'twitter';
 }
 
 export interface CommandBuildInput {
@@ -138,7 +138,7 @@ export interface OutputFile {
  * null, mirroring the SocialItem contract.
  */
 export interface RunSampleRow {
-  kind: 'reddit' | 'twitter';
+  platform: 'reddit' | 'twitter';
   id: string;
   title: string | null;
   author: string | null;

@@ -205,7 +205,7 @@ describe('run engine', () => {
 
     expect(result.sample).toBeDefined();
     expect(result.sample).toHaveLength(1);
-    expect(result.sample?.[0]).toMatchObject({ kind: 'reddit', id: 'abc', title: 'CLI automation', score: 8 });
+    expect(result.sample?.[0]).toMatchObject({ platform: 'reddit', id: 'abc', title: 'CLI automation', score: 8 });
   });
 
   it('caps the run sample at 50 rows', async () => {

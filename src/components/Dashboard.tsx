@@ -1,4 +1,4 @@
-import { BrandMark } from '../icons';
+import { BrandMark, Icon } from '../icons';
 import { useModalA11y } from '../hooks/useModalA11y';
 import type { AccentKey } from '../blockVisuals';
 
@@ -14,7 +14,7 @@ export interface FlowSummary {
 
 interface DashboardProps {
   flows: FlowSummary[];
-  currentId: string;
+  activeFlowId: string;
   onOpen: (id: string) => void;
   onClose: () => void;
   onNew?: () => void;
@@ -26,7 +26,7 @@ const DOT_COLOR: Record<FlowSummary['status'], string> = {
   error: 'var(--brand-600)'
 };
 
-export function Dashboard({ flows, currentId, onOpen, onClose, onNew }: DashboardProps) {
+export function Dashboard({ flows, activeFlowId, onOpen, onClose, onNew }: DashboardProps) {
   const dialogRef = useModalA11y<HTMLDivElement>(onClose);
   return (
     <div ref={dialogRef} className="dash-scrim" role="dialog" aria-modal="true" aria-label="Flows" tabIndex={-1}>
@@ -56,7 +56,7 @@ export function Dashboard({ flows, currentId, onOpen, onClose, onNew }: Dashboar
                   <span className="fc-dot" style={{ background: DOT_COLOR[flow.status] }} />
                   <span className="fc-status">
                     {flow.statusLabel}
-                    {flow.id === currentId ? ' · open' : ''}
+                    {flow.id === activeFlowId ? ' · open' : ''}
                   </span>
                 </div>
                 <h3 className="fc-title">{flow.name}</h3>
@@ -76,9 +76,7 @@ export function Dashboard({ flows, currentId, onOpen, onClose, onNew }: Dashboar
             ))}
             <button className="flow-card new-card" type="button" onClick={onNew}>
               <div style={{ textAlign: 'center' }}>
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+                <Icon name="plus" size={26} />
                 <div style={{ marginTop: 8, fontWeight: 600, fontSize: 13 }}>New flow</div>
               </div>
             </button>

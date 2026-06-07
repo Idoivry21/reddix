@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Reddix** (working name) is a **local, single-user** canvas automation workbench that wraps two external CLIs — `rdt-cli` (Reddit, binary `rdt`) and `twitter-cli` (X/Twitter, binary `twitter`). Users drag blocks onto a freeform node canvas, connect them, configure settings, then run flows manually or on a schedule and export the results.
+**Reddix** is a **local, single-user** canvas automation workbench that wraps two external CLIs — `rdt-cli` (Reddit, binary `rdt`) and `twitter-cli` (X/Twitter, binary `twitter`). Users drag blocks onto a freeform node canvas, connect them, configure settings, then run flows manually or on a schedule and export JSON, CSV, Markdown, or self-contained HTML reports.
 
 V1 is **read-only research/export only**. Authenticated write actions (post/comment/vote/like/retweet) are explicitly out of scope. There is **no database** — persistence is local JSON. The CLIs are **not bundled**; the app detects and reports missing binaries.
 
@@ -16,6 +16,7 @@ Full product spec: [docs/superpowers/specs/2026-06-06-social-cli-canvas-automati
 npm run dev          # Vite frontend on http://127.0.0.1:5173 (proxies /api and /events to backend)
 npm run dev:server   # Express backend on http://127.0.0.1:8787 (tsx watch)
 npm start            # backend, no watch
+npm run serve        # build frontend, then serve UI + API from one Express process
 npm run build        # tsc -b (type-check both projects) then vite build
 npm run lint         # tsc -b --noEmit — this is the ONLY lint/typecheck; there is no ESLint
 npm test             # vitest watch
@@ -36,8 +37,12 @@ Both halves must run for a full local session: start the backend (`dev:server`) 
 ### Environment
 
 - `PORT` — backend port (default `8787`).
+- `HOST` — backend bind address (default `127.0.0.1`; use `0.0.0.0` only in containers).
 - `REDDIX_ALLOWED_ORIGINS` — comma-separated CORS allowlist (default `http://127.0.0.1:5173,http://localhost:5173`, the local Vite dev origins). Foreign origins are rejected to block DNS-rebind/CSRF against localhost.
+- `REDDIX_BACKEND_ORIGIN` — dev-only Vite proxy target for `/api` and `/events` (default `http://127.0.0.1:8787`).
 - `REDDIX_DATA_DIR` — JSON store + artifact location (default `.reddix-data/`, git-ignored).
+- `REDDIX_STATIC_DIR` — production SPA directory served by `npm start` / `npm run serve` (default `./dist`).
+- `REDDIX_MAX_OUTPUT_BYTES` — per-stream stdout/stderr cap for CLI execution (default `10485760`).
 - `TWITTER_AUTH_TOKEN`, `TWITTER_CT0` — consumed from the environment by `twitter-cli` for auth-required blocks. The app **reads but never persists or prints** these.
 
 ## Architecture
@@ -60,16 +65,20 @@ src/shared/     ISOMORPHIC core imported by BOTH frontend and backend
 - [normalizers.ts](src/shared/normalizers.ts) — map each provider's `--json` payload onto the normalized `SocialItem`.
 - [transforms.ts](src/shared/transforms.ts) — `applyLimit` / `applyFilterText` / `applyEngagementFilter`, etc., operating on `SocialItem[]`.
 - [exporters.ts](src/shared/exporters.ts) — JSON/CSV/Markdown serializers + timestamped export paths.
+- [htmlReport.ts](src/shared/htmlReport.ts) — self-contained HTML report serializer. Escapes fetched content and allows only `http(s)` links.
 - [redaction.ts](src/shared/redaction.ts) — strips secret values from any string/argv before display or storage.
+- [providers.ts](src/shared/providers.ts) — single source for provider labels, badges, node prefixes, and CLI executables.
 - [types.ts](src/shared/types.ts) — shared types incl. the `SocialItem` shape both providers normalize to.
 
 ### Block types and how to add one
 
-Block types are namespaced strings: `reddit.*`, `twitter.*` (CLI-backed), `transform.*`, `output.*`, `utility.*` (local). `runEngine` decides CLI-vs-local by prefix (`reddit.`/`twitter.` → spawn a CLI). To add a block, touch **three** places:
+Block types are namespaced strings: `reddit.*`, `twitter.*` (CLI-backed), `transform.*`, `output.*`, `utility.*` (local). `runEngine` decides CLI-vs-local from provider metadata (`reddit.`/`twitter.` → spawn a CLI). To add a block, usually touch **three** places:
 
 1. Add a `BlockSpec` to [blockSpecs.ts](src/shared/blockSpecs.ts).
 2. CLI block → add a `case` in `buildBlockCommand` ([commandBuilders.ts](src/shared/commandBuilders.ts)). Transform/output block → add a branch in `runFlow` ([server/runEngine.ts](server/runEngine.ts)).
 3. Add unit tests (every command builder, transform, and graph rule is expected to be tested — see `tests/`).
+
+Output blocks may also need serializer or artifact-serving tests. `output.exportHtml` is the reference: [htmlReport.ts](src/shared/htmlReport.ts), [tests/htmlReport.test.ts](tests/htmlReport.test.ts), and [tests/artifactServe.test.ts](tests/artifactServe.test.ts).
 
 ### Execution model (server/runEngine.ts)
 
@@ -82,14 +91,15 @@ Block types are namespaced strings: `reddit.*`, `twitter.*` (CLI-backed), `trans
 
 ### Backend wiring (server/)
 
-- [routes.ts](server/routes.ts) — REST under `/api` (`/health`, `/blocks`, `/flows`, `/flows/:id`, `/runs`, `/runs/:flowId`, `/schedules/:flowId/trigger`) plus **SSE at `/events`** for live run-step streaming (Vite proxies `/events`).
+- [routes.ts](server/routes.ts) — REST under `/api` (`/health`, `/metrics`, `/blocks`, `/flows`, `/flows/:id`, `/runs`, `/runs/:flowId`, `/schedules/:flowId/trigger`, `/artifacts/*`) plus **SSE at `/events`** for live run-step streaming (Vite proxies `/events`).
 - [executor.ts](server/executor.ts) — spawns the CLI with **`shell: false`** and an argv array; also `checkExecutable` for health checks.
 - [scheduler.ts](server/scheduler.ts) — in-memory, **single-flight per flow** (overlapping trigger → `onSkip`, recorded not queued), enforces a minimum interval (15 min) plus jitter.
 - [storage.ts](server/storage.ts) — JSON files under `REDDIX_DATA_DIR`: `flows/<id>.json`, `runs/<flowId>.json` (capped, default 50/flow), `preferences.json`. Records are `schemaVersion`-tagged with migrate-on-load. No DB.
+- [csrfGuard.ts](server/csrfGuard.ts) and [cors.ts](server/cors.ts) — same-origin protections for localhost. Safe `GET` routes remain readable; mutating cross-site requests are rejected.
 
 ### Frontend (src/)
 
-[App.tsx](src/App.tsx) renders the workbench: `TopBar`, `BlockPalette`, `Canvas` (a bespoke `@xyflow`-free canvas in [Canvas.tsx](src/components/Canvas.tsx)), `Inspector`, `ConsolePanel`. State is driven by the `useWorkbenchState` hook in [useFlowState.ts](src/hooks/useFlowState.ts).
+[App.tsx](src/App.tsx) renders the workbench: `TopBar`, `BlockPalette`, `Canvas` (a bespoke `@xyflow`-free canvas in [Canvas.tsx](src/components/Canvas.tsx)), `Inspector`, `ConsolePanel`, `ScheduleModal`, and the flow dashboard. State is driven by the `useWorkbenchState` hook in [useFlowState.ts](src/hooks/useFlowState.ts).
 
 > **Wiring:** the frontend is wired to the backend through [api.ts](src/api.ts). `runNow` validates the flow locally (`validateFlow`), persists it via `PUT /api/flows/:id`, `POST`s `/api/runs`, then hydrates console + node statuses from the returned `RunRecord`; live run steps stream over SSE (`/events`). Drive any new behavior through the existing `/api` routes and the shared `commandBuilders`/`graph` modules — do not duplicate that logic in the frontend.
 
@@ -100,6 +110,8 @@ These come straight from the spec and must hold for any change:
 1. **No shell strings, ever.** Commands are argv arrays built only from allowlisted block specs; user input is a value in the array, never interpolated. `executor.ts` spawns with `shell: false`.
 2. **Secrets never leak.** Auth tokens must not appear in flow JSON, run records, the command trace, or logs. `redaction.ts` scrubs them; a `BuiltCommand` carries both `argv` (real) and `displayArgv` (what is shown/stored) — display/persist the redacted one.
 3. **Never out-run the CLIs' own throttling.** `rdt-cli`/`twitter-cli` apply their own backoff/jitter; the app adds minimum schedule interval, jitter, single-flight, and per-provider spacing on top — it must not disable or undercut the CLIs' limits.
+4. **Artifacts stay contained.** Export paths and `/api/artifacts/*` resolve under `REDDIX_DATA_DIR/artifacts`; traversal and symlink escapes are rejected before files are served.
+5. **Same-origin localhost protections stay on.** CORS allowlisting, CSRF checks for mutating verbs, `/runs` rate limiting, and schema validation are part of the safety model.
 
 ## Conventions
 

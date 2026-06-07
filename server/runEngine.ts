@@ -8,14 +8,13 @@ import { validateFlow } from '../src/shared/graph';
 import { normalizeRedditPayload, normalizeTwitterPayload } from '../src/shared/normalizers';
 import { redactSecrets } from '../src/shared/redaction';
 import type { SecretMap } from '../src/shared/redaction';
+import { MAX_SAMPLE_ROWS } from '../src/shared/runLimits';
 import { applyEngagementFilter, applyFilterText, applyLimit, applyMerge, applySort } from '../src/shared/transforms';
 import type { RunSampleRow, SocialItem } from '../src/shared/types';
 import type { EventLogger } from './logger';
 import { noopMetrics, type Metrics } from './metrics';
+import { makeTerminalRun } from './runRecord';
 import type { CliExecutor, FlowDefinition, RunRecord, RunStep } from './types';
-
-/** Cap the rows carried on a run so payloads/SSE/persisted records stay bounded. */
-const MAX_SAMPLE_ROWS = 50;
 
 interface RunFlowOptions {
   flow: FlowDefinition;
@@ -51,18 +50,12 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
       errors: validation.errors.length
     });
     metrics.increment('flow_runs_total', { status: 'failed' });
-    return {
-      schemaVersion: 1,
-      id: nanoid(),
+    return makeTerminalRun({
       flowId: options.flow.id,
       status: 'failed',
-      startedAt,
-      endedAt: now().toISOString(),
-      steps: [],
-      outputFiles: [],
       error: validation.errors.map((error) => error.message).join('; '),
-      sample: []
-    };
+      now
+    });
   }
 
   const nodes = topologicalNodes(options.flow);
@@ -99,6 +92,17 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     }
   };
 
+  const nodeCtx: NodeRunContext = {
+    executor: options.executor,
+    writeArtifact: options.writeArtifact,
+    flowName: options.flow.name,
+    flowId,
+    now,
+    redact,
+    redactArgv,
+    logger
+  };
+
   for (const node of nodes) {
     const dependencyEdges = edgesByTarget.get(node.id) ?? [];
     const dependencyBlocked =
@@ -114,98 +118,30 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     try {
       const inputItems = dependencyEdges.flatMap((edge) => data.get(edge.source) ?? []);
       if (isCliNode(node)) {
-        const settings = resolveInputBoundSettings(node.type, node.settings, inputItems);
-        const command = buildBlockCommand({
-          blockId: node.id,
-          blockType: node.type,
-          settings
-        });
-        const result = await options.executor(command);
-        // CLIs report logical failures via a `{ ok: false, error }` JSON
-        // envelope on stdout (often with empty stderr), and usually a non-zero
-        // exit. Treat either signal as a failure and surface the envelope's
-        // human message instead of a bare "Command exited with N".
-        const envelopeError = parseEnvelopeError(result.stdout);
-        if (result.exitCode !== 0 || envelopeError) {
+        const outcome = await runCliNode(node, inputItems, stepStarted, nodeCtx);
+        recordStep(outcome.step, node.type);
+        if (outcome.items) {
+          data.set(node.id, outcome.items);
+        }
+        if (outcome.failed) {
           failed = true;
-          const message =
-            envelopeError ?? (result.stderr.trim() || `Command exited with ${result.exitCode}`);
-          const step: RunStep = {
-            blockId: node.id,
-            status: 'failed',
-            argv: redactArgv(command.displayArgv),
-            exitCode: result.exitCode,
-            stdoutSummary: summarizeStdout(redact(result.stdout)),
-            stderr: redact(result.stderr),
-            startedAt: stepStarted,
-            endedAt: now().toISOString(),
-            error: redact(message)
-          };
-          recordStep(step, node.type);
           markDownstreamBlocked(node.id, edgesBySource, blocked);
           if (options.flow.failFast) {
             break;
           }
-          continue;
         }
-
-        // Exit 0 with empty stdout is treated as "no results", but it can also
-        // mask an auth/network failure that produced no output. Warn so the two
-        // are distinguishable in logs.
-        if (!result.stdout.trim()) {
-          logger?.warn('cli.emptyStdout', {
-            flowId,
-            blockId: node.id,
-            provider: command.provider,
-            exitCode: result.exitCode,
-            stderr: summarizeStdout(redact(result.stderr))
-          });
-        }
-
-        const payload = parseJson(result.stdout);
-        const onUnrecognized = (info: { keys: string[] }): void => {
-          logger?.warn('cli.unrecognizedPayload', {
-            flowId,
-            blockId: node.id,
-            provider: command.provider,
-            keys: info.keys
-          });
-        };
-        const items =
-          command.provider === 'reddit'
-            ? normalizeRedditPayload(payload, node.id, onUnrecognized)
-            : normalizeTwitterPayload(payload, node.id, onUnrecognized);
-        data.set(node.id, items);
-        const step: RunStep = {
-          blockId: node.id,
-          status: 'success',
-          argv: redactArgv(command.displayArgv),
-          exitCode: result.exitCode,
-          stdoutSummary: summarizeStdout(redact(result.stdout)),
-          stderr: redact(result.stderr),
-          startedAt: stepStarted,
-          endedAt: now().toISOString()
-        };
-        recordStep(step, node.type);
         continue;
       }
 
-      if (node.type === 'transform.limit') {
-        data.set(node.id, applyLimit(inputItems, node.settings));
-      } else if (node.type === 'transform.filterText') {
-        data.set(node.id, applyFilterText(inputItems, node.settings));
-      } else if (node.type === 'transform.engagementFilter') {
-        data.set(node.id, applyEngagementFilter(inputItems, node.settings));
-      } else if (node.type === 'transform.sortLocal') {
-        data.set(node.id, applySort(inputItems, node.settings));
-      } else if (node.type === 'transform.mergeStreams') {
-        data.set(node.id, applyMerge(inputItems));
-      } else if (node.type.startsWith('output.')) {
-        const artifact = await writeOutput(node, inputItems, options.writeArtifact, now(), options.flow.name);
-        outputFiles.push(artifact);
-        sample = toSampleRows(inputItems, redact);
-      } else {
-        data.set(node.id, inputItems);
+      const outcome = await runLocalNode(node, inputItems, nodeCtx);
+      if (outcome.items) {
+        data.set(node.id, outcome.items);
+      }
+      if (outcome.artifact) {
+        outputFiles.push(outcome.artifact);
+      }
+      if (outcome.sample) {
+        sample = outcome.sample;
       }
 
       // For transforms, log input vs output counts so "filter dropped 100→0"
@@ -289,6 +225,111 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   };
 }
 
+/** Shared closures/dependencies a single node needs to run, built once per flow. */
+interface NodeRunContext {
+  executor: CliExecutor;
+  writeArtifact: RunFlowOptions['writeArtifact'];
+  flowName: string;
+  flowId: string;
+  now: () => Date;
+  redact: (value: string) => string;
+  redactArgv: (value: string[]) => string[];
+  logger?: EventLogger;
+}
+
+/**
+ * Run one CLI-backed node: build the argv, execute, and map the result to a
+ * RunStep. Returns the (success or failed) step plus, on success, the normalized
+ * items; `failed` tells the caller to block downstream nodes. The shared step
+ * fields are built once (`base`) so the redaction/summary convention can't drift
+ * between the success and failure records.
+ */
+async function runCliNode(
+  node: FlowNodeModel,
+  inputItems: SocialItem[],
+  stepStarted: string,
+  ctx: NodeRunContext
+): Promise<{ step: RunStep; items?: SocialItem[]; failed: boolean }> {
+  const settings = resolveInputBoundSettings(node.type, node.settings, inputItems);
+  const command = buildBlockCommand({ blockId: node.id, blockType: node.type, settings });
+  const result = await ctx.executor(command);
+  const base = {
+    blockId: node.id,
+    argv: ctx.redactArgv(command.displayArgv),
+    exitCode: result.exitCode,
+    stdoutSummary: summarizeStdout(ctx.redact(result.stdout)),
+    stderr: ctx.redact(result.stderr),
+    startedAt: stepStarted,
+    endedAt: ctx.now().toISOString()
+  };
+
+  // CLIs report logical failures via a `{ ok: false, error }` JSON envelope on
+  // stdout (often with empty stderr), and usually a non-zero exit. Treat either
+  // signal as a failure and surface the envelope's human message instead of a
+  // bare "Command exited with N".
+  const envelopeError = parseEnvelopeError(result.stdout);
+  if (result.exitCode !== 0 || envelopeError) {
+    const message = envelopeError ?? (result.stderr.trim() || `Command exited with ${result.exitCode}`);
+    return { step: { ...base, status: 'failed', error: ctx.redact(message) }, failed: true };
+  }
+
+  // Exit 0 with empty stdout is treated as "no results", but it can also mask an
+  // auth/network failure that produced no output. Warn so the two are distinguishable.
+  if (!result.stdout.trim()) {
+    ctx.logger?.warn('cli.emptyStdout', {
+      flowId: ctx.flowId,
+      blockId: node.id,
+      provider: command.provider,
+      exitCode: result.exitCode,
+      stderr: summarizeStdout(ctx.redact(result.stderr))
+    });
+  }
+
+  const payload = parseJson(result.stdout);
+  const onUnrecognized = (info: { keys: string[] }): void => {
+    ctx.logger?.warn('cli.unrecognizedPayload', {
+      flowId: ctx.flowId,
+      blockId: node.id,
+      provider: command.provider,
+      keys: info.keys
+    });
+  };
+  const items =
+    command.provider === 'reddit'
+      ? normalizeRedditPayload(payload, node.id, onUnrecognized)
+      : normalizeTwitterPayload(payload, node.id, onUnrecognized);
+  return { step: { ...base, status: 'success' }, items, failed: false };
+}
+
+/**
+ * Run one local (transform/output/passthrough) node. Returns the items it
+ * produced, or — for an output node — the written artifact plus the sample
+ * preview. The caller owns recording the step and the transform-count logging.
+ */
+async function runLocalNode(
+  node: FlowNodeModel,
+  inputItems: SocialItem[],
+  ctx: NodeRunContext
+): Promise<{ items?: SocialItem[]; artifact?: { path: string; bytes: number }; sample?: RunSampleRow[] }> {
+  switch (node.type) {
+    case 'transform.limit':
+      return { items: applyLimit(inputItems, node.settings) };
+    case 'transform.filterText':
+      return { items: applyFilterText(inputItems, node.settings) };
+    case 'transform.engagementFilter':
+      return { items: applyEngagementFilter(inputItems, node.settings) };
+    case 'transform.sortLocal':
+      return { items: applySort(inputItems, node.settings) };
+    case 'transform.mergeStreams':
+      return { items: applyMerge(inputItems) };
+  }
+  if (node.type.startsWith('output.')) {
+    const artifact = await writeOutput(node, inputItems, ctx.writeArtifact, ctx.now(), ctx.flowName);
+    return { artifact, sample: toSampleRows(inputItems, ctx.redact) };
+  }
+  return { items: inputItems };
+}
+
 /** Coarse operation class for a node, used to label step-failure logs. */
 function operationOf(node: FlowNodeModel): string {
   if (isCliNode(node)) {
@@ -323,7 +364,7 @@ function toSampleRows(
   max = MAX_SAMPLE_ROWS
 ): RunSampleRow[] {
   return items.slice(0, max).map((item) => ({
-    kind: item.platform,
+    platform: item.platform,
     id: item.id,
     title: redactNullable(item.title ?? item.body ?? (item.text || null), redact),
     author: redactNullable(item.author, redact),
@@ -461,8 +502,14 @@ function parseEnvelopeError(stdout: string): string | null {
   return 'Command reported an error';
 }
 
+// Caps how much CLI stdout/stderr is persisted into each RunStep and streamed
+// over SSE, so run records stay bounded.
+const STDOUT_SUMMARY_MAX_CHARS = 240;
+
 function summarizeStdout(stdout: string): string {
-  return stdout.length > 240 ? `${stdout.slice(0, 240)}...` : stdout;
+  return stdout.length > STDOUT_SUMMARY_MAX_CHARS
+    ? `${stdout.slice(0, STDOUT_SUMMARY_MAX_CHARS)}...`
+    : stdout;
 }
 
 async function writeOutput(

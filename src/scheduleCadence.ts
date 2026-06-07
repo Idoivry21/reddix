@@ -8,9 +8,12 @@ import { MIN_SCHEDULE_INTERVAL_MS } from './shared/schedule';
 
 export { MIN_SCHEDULE_INTERVAL_MS };
 
-const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
+// Fixed 30-day approximation used as a coarse interval — NOT a calendar month.
+// describeInterval's `ms === MONTH` equality check depends on this exact value.
 const MONTH = 30 * DAY;
 
 export interface CadencePreset {
@@ -18,14 +21,16 @@ export interface CadencePreset {
   title: string;
   cron: string;
   intervalMs: number;
+  /** Human-readable description; the single source for cronExplain. */
+  explain?: string;
 }
 
 export const SCHEDULE_PRESETS: CadencePreset[] = [
-  { id: 'hourly', title: 'Every hour', cron: '0 * * * *', intervalMs: HOUR },
-  { id: 'daily', title: 'Daily · 9:00', cron: '0 9 * * *', intervalMs: DAY },
-  { id: 'weekdays', title: 'Weekdays · 8:00', cron: '0 8 * * 1-5', intervalMs: DAY },
-  { id: 'weekly', title: 'Mondays · 9:00', cron: '0 9 * * 1', intervalMs: WEEK },
-  { id: 'monthly', title: '1st of month', cron: '0 9 1 * *', intervalMs: MONTH },
+  { id: 'hourly', title: 'Every hour', cron: '0 * * * *', intervalMs: HOUR, explain: 'Runs at the top of every hour.' },
+  { id: 'daily', title: 'Daily · 9:00', cron: '0 9 * * *', intervalMs: DAY, explain: 'Runs every day at 09:00.' },
+  { id: 'weekdays', title: 'Weekdays · 8:00', cron: '0 8 * * 1-5', intervalMs: DAY, explain: 'Runs Monday–Friday at 08:00.' },
+  { id: 'weekly', title: 'Mondays · 9:00', cron: '0 9 * * 1', intervalMs: WEEK, explain: 'Runs every Monday at 09:00.' },
+  { id: 'monthly', title: '1st of month', cron: '0 9 1 * *', intervalMs: MONTH, explain: 'Runs on the 1st of each month at 09:00.' },
   { id: 'custom', title: 'Custom', cron: '', intervalMs: DAY }
 ];
 
@@ -48,7 +53,7 @@ export function parseCronIntervalMs(cron: string): number | null {
   const [minute, hour, dom, , dow] = parts;
   const everyMinutes = /^\*\/(\d+)$/.exec(minute);
   if (everyMinutes && hour === '*') {
-    return Number(everyMinutes[1]) * 60 * 1000;
+    return Number(everyMinutes[1]) * MINUTE;
   }
   const everyHours = /^\*\/(\d+)$/.exec(hour);
   if (everyHours && /^\d+$/.test(minute)) {
@@ -84,7 +89,7 @@ export function presetForCron(cron: string): CadencePreset | undefined {
 export function describeInterval(intervalMs: number): string {
   const ms = clampInterval(intervalMs);
   if (ms < HOUR) {
-    return `every ${Math.round(ms / (60 * 1000))} min`;
+    return `every ${Math.round(ms / MINUTE)} min`;
   }
   if (ms < DAY) {
     const hours = Math.round(ms / HOUR);
@@ -102,14 +107,9 @@ export function describeInterval(intervalMs: number): string {
   return `every ${Math.round(ms / DAY)} days`;
 }
 
-const EXPLAIN: Record<string, string> = {
-  '0 * * * *': 'Runs at the top of every hour.',
-  '0 9 * * *': 'Runs every day at 09:00.',
-  '0 8 * * 1-5': 'Runs Monday–Friday at 08:00.',
-  '0 9 * * 1': 'Runs every Monday at 09:00.',
-  '0 9 1 * *': 'Runs on the 1st of each month at 09:00.'
-};
-
 export function cronExplain(cron: string): string {
-  return EXPLAIN[cron.trim()] ?? 'Custom schedule — five fields: minute hour day month weekday.';
+  return (
+    PRESET_BY_CRON.get(cron.trim())?.explain ??
+    'Custom schedule — five fields: minute hour day month weekday.'
+  );
 }

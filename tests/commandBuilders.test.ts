@@ -130,7 +130,7 @@ describe('provider command builders', () => {
 
     expect(spec.provider).toBe('local');
     expect(spec.category).toBe('Output');
-    expect(spec.command).toBeUndefined();
+    expect(spec.executable).toBeUndefined();
     expect(spec.ports.input[0].type).toBe('SocialItem[]');
     const pathField = spec.fields.find((field) => field.key === 'path');
     expect(pathField?.required).toBe(true);

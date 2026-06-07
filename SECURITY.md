@@ -26,6 +26,7 @@ In scope:
 - Command execution safety around `rdt` and `twitter` CLI invocations.
 - Secret redaction in logs, SSE payloads, run records, exports, and UI.
 - Path traversal or symlink escapes from local data/artifact storage.
+- Escaping, link sanitization, and CSP behavior for generated HTML reports.
 - CORS, CSRF, rate limiting, scheduler, and local API abuse paths.
 
 Out of scope:

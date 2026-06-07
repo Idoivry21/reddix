@@ -111,47 +111,51 @@ function findPort(ports: PortSpec[], portId: string): PortSpec | undefined {
   return ports.find((port) => port.id === portId);
 }
 
-function hasCycle(flow: FlowModel): boolean {
-  const adjacency = new Map<string, string[]>();
-  for (const node of flow.nodes) {
-    adjacency.set(node.id, []);
-  }
+/**
+ * Build a node→neighbours map. `forward` (default) maps source→target; `reverse`
+ * maps target→source. Every node id is seeded with an empty list so lookups never
+ * return undefined for an isolated node.
+ */
+function buildAdjacency(flow: FlowModel, reverse: boolean): Map<string, string[]> {
+  const adjacency = new Map<string, string[]>(flow.nodes.map((node) => [node.id, [] as string[]]));
   for (const edge of flow.edges) {
-    adjacency.get(edge.source)?.push(edge.target);
+    const [from, to] = reverse ? [edge.target, edge.source] : [edge.source, edge.target];
+    adjacency.get(from)?.push(to);
   }
+  return adjacency;
+}
 
-  const visited = new Set<string>();
-  const visiting = new Set<string>();
-
-  for (const node of flow.nodes) {
-    const startId = node.id;
-    if (visited.has(startId)) {
-      continue;
+/**
+ * True if the flow's directed edges contain a cycle. Uses Kahn's topological
+ * sort iteratively (no recursion, so arbitrarily deep acyclic chains are safe):
+ * if fewer nodes can be peeled off than exist, the remainder forms a cycle.
+ */
+function hasCycle(flow: FlowModel): boolean {
+  const adjacency = buildAdjacency(flow, false);
+  const indegree = new Map<string, number>(flow.nodes.map((node) => [node.id, 0]));
+  for (const targets of adjacency.values()) {
+    for (const target of targets) {
+      if (indegree.has(target)) {
+        indegree.set(target, (indegree.get(target) ?? 0) + 1);
+      }
     }
-    const stack: Array<{ nodeId: string; nextIndex: number }> = [{ nodeId: startId, nextIndex: 0 }];
-    visiting.add(startId);
-    while (stack.length > 0) {
-      const frame = stack[stack.length - 1];
-      const nextNodes = adjacency.get(frame.nodeId) ?? [];
-      if (frame.nextIndex >= nextNodes.length) {
-        visiting.delete(frame.nodeId);
-        visited.add(frame.nodeId);
-        stack.pop();
+  }
+  const queue = [...indegree].filter(([, degree]) => degree === 0).map(([id]) => id);
+  let processed = 0;
+  for (let index = 0; index < queue.length; index += 1) {
+    processed += 1;
+    for (const target of adjacency.get(queue[index]) ?? []) {
+      if (!indegree.has(target)) {
         continue;
       }
-      const next = nextNodes[frame.nextIndex];
-      frame.nextIndex += 1;
-      if (visiting.has(next)) {
-        return true;
-      }
-      if (!visited.has(next)) {
-        visiting.add(next);
-        stack.push({ nodeId: next, nextIndex: 0 });
+      const degree = (indegree.get(target) ?? 0) - 1;
+      indegree.set(target, degree);
+      if (degree === 0) {
+        queue.push(target);
       }
     }
   }
-
-  return false;
+  return processed < flow.nodes.length;
 }
 
 function isReachableFromSource(
@@ -160,14 +164,7 @@ function isReachableFromSource(
   nodesById: Map<string, FlowNodeModel>,
   specsByNodeId: Map<string, BlockSpec>
 ): boolean {
-  const reverse = new Map<string, string[]>();
-  for (const node of flow.nodes) {
-    reverse.set(node.id, []);
-  }
-  for (const edge of flow.edges) {
-    reverse.get(edge.target)?.push(edge.source);
-  }
-
+  const reverse = buildAdjacency(flow, true);
   const queue = [...(reverse.get(targetId) ?? [])];
   const visited = new Set<string>();
   while (queue.length > 0) {

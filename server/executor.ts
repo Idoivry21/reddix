@@ -10,6 +10,10 @@ const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10 MiB per stream
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
 const OUTPUT_LIMIT_EXIT_CODE = 1;
 const TIMEOUT_EXIT_CODE = 124;
+const SPAWN_ERROR_EXIT_CODE = 127; // conventional "command not found" / spawn failure
+// A `--help` health probe should be small and fast — bound it tighter than a real run.
+const HEALTH_CHECK_MAX_OUTPUT_BYTES = 64 * 1024;
+const HEALTH_CHECK_TIMEOUT_MS = 5_000;
 
 /**
  * Builds a least-privilege environment for a spawned CLI: only the variables
@@ -108,7 +112,7 @@ export function spawnCapped(
       }
       settled = true;
       clearTimeout(timeout);
-      resolve({ stdout: stdout.value, stderr: error.message, exitCode: 127 });
+      resolve({ stdout: stdout.value, stderr: error.message, exitCode: SPAWN_ERROR_EXIT_CODE });
     });
     child.on('close', (code) => {
       finalize(code ?? 1);
@@ -163,14 +167,11 @@ export function createCliExecutor(deps: CliExecutorDeps = {}): CliExecutor {
   };
 }
 
-/** Default executor with no logging/metrics, for callers that don't wire them. */
-export const cliExecutor: CliExecutor = createCliExecutor();
-
 export async function checkExecutable(executable: string): Promise<boolean> {
   const result = await spawnCapped(executable, ['--help'], {
     env: buildCliEnv(process.env),
-    maxOutputBytes: 64 * 1024,
-    timeoutMs: Math.min(resolveCliTimeoutMs(process.env), 5_000)
+    maxOutputBytes: HEALTH_CHECK_MAX_OUTPUT_BYTES,
+    timeoutMs: Math.min(resolveCliTimeoutMs(process.env), HEALTH_CHECK_TIMEOUT_MS)
   });
   return result.exitCode === 0;
 }

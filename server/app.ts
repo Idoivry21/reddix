@@ -10,6 +10,9 @@ import { createMetrics, type Metrics } from './metrics';
 import { createRoutes } from './routes';
 import type { createStorage } from './storage';
 
+/** Max accepted request body — caps the size of a flow definition that can be PUT. */
+const JSON_BODY_LIMIT = '2mb';
+
 interface CreateAppOptions {
   storage: ReturnType<typeof createStorage>;
   dataDir: string;
@@ -45,7 +48,7 @@ export function createApp(options: CreateAppOptions): CreatedApp {
   app.use(logger.requestLogger());
   app.use(cors(buildCorsOptions(process.env)));
   app.use(createCsrfGuard(logger));
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.get('/events', eventsHandler);
   app.use('/api', router);
 

@@ -2,9 +2,8 @@ import { constants } from 'node:fs';
 import { access, mkdir, open, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
-import { nanoid } from 'nanoid';
-import { listBlockSpecs } from '../src/shared/commandBuilders';
-import { getProviderHealthCommands } from '../src/shared/commandBuilders';
+import type { Request, Response } from 'express';
+import { getProviderHealthCommands, listBlockSpecs } from '../src/shared/commandBuilders';
 import { validateFlow } from '../src/shared/graph';
 import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
 import { MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
@@ -17,8 +16,34 @@ import { createRateLimiter } from './rateLimiter';
 import { createScheduler } from './scheduler';
 import { formatZodError, parseFlowPutBody, parseRunPostBody } from './schemas';
 import { isSafeId, resolveContainedPath } from './safeId';
+import { makeTerminalRun } from './runRecord';
 import { createSseHub } from './sseHub';
 import type { CliExecutor, PersistedFlow, RunRecord } from './types';
+
+/** Subdirectory of the data dir where run artifacts are written AND served from.
+ * Single-sourced so the write path and the GET /artifacts read path can't drift. */
+const ARTIFACTS_SUBDIR = 'artifacts';
+/** Default minimum gap between manual /runs triggers per flow (ms). */
+const DEFAULT_RUN_MIN_INTERVAL_MS = 3000;
+
+function artifactsDirFor(dataDir: string): string {
+  return path.join(dataDir, ARTIFACTS_SUBDIR);
+}
+
+/** 400-guard for `:flowId` routes — rejects path-unsafe ids in one place. Returns
+ * false (and has already sent the 400) when the caller should stop. */
+function ensureSafeFlowId(request: Request, response: Response): boolean {
+  if (!isSafeId(request.params.flowId)) {
+    response.status(400).json({ error: 'Invalid flow id', code: 'INVALID_FLOW_ID' });
+    return false;
+  }
+  return true;
+}
+
+/** Public run-result response: a failed run is a 422, anything else 200. */
+function respondWithRun(response: Response, run: RunRecord): void {
+  response.status(run.status === 'failed' ? 422 : 200).json({ run });
+}
 
 interface RoutesOptions {
   storage: ReturnType<typeof import('./storage').createStorage>;
@@ -40,7 +65,7 @@ export function createRoutes(options: RoutesOptions) {
   // Throttle the subprocess-spawning /runs route per flow to protect accounts
   // and the host from rapid repeated triggers.
   const runRateLimiter = createRateLimiter({
-    minIntervalMs: Number(options.runMinIntervalMs ?? 3000)
+    minIntervalMs: Number(options.runMinIntervalMs ?? DEFAULT_RUN_MIN_INTERVAL_MS)
   });
 
   const scheduler = createScheduler({
@@ -131,7 +156,7 @@ export function createRoutes(options: RoutesOptions) {
 
   // Read-only serve for run artifacts (HTML reports, JSON/CSV/MD exports) under
   // <dataDir>/artifacts. GET only; csrfGuard only blocks mutating verbs.
-  const artifactsDir = path.join(options.dataDir, 'artifacts');
+  const artifactsDir = artifactsDirFor(options.dataDir);
   router.get('/artifacts/*splat', async (request, response) => {
     const splat = (request.params as Record<string, unknown>).splat;
     const relPath = Array.isArray(splat) ? splat.join('/') : typeof splat === 'string' ? splat : '';
@@ -187,8 +212,7 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   router.get('/flows/:flowId', async (request, response) => {
-    if (!isSafeId(request.params.flowId)) {
-      response.status(400).json({ error: 'Invalid flow id' });
+    if (!ensureSafeFlowId(request, response)) {
       return;
     }
     const flow = await options.storage.getFlow(request.params.flowId);
@@ -200,8 +224,7 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   router.put('/flows/:flowId', async (request, response) => {
-    if (!isSafeId(request.params.flowId)) {
-      response.status(400).json({ error: 'Invalid flow id' });
+    if (!ensureSafeFlowId(request, response)) {
       return;
     }
     const parsed = parseFlowPutBody(request.body);
@@ -241,8 +264,7 @@ export function createRoutes(options: RoutesOptions) {
   });
 
   router.get('/runs/:flowId', async (request, response) => {
-    if (!isSafeId(request.params.flowId)) {
-      response.status(400).json({ error: 'Invalid flow id' });
+    if (!ensureSafeFlowId(request, response)) {
       return;
     }
     response.json({ runs: await options.storage.listRuns(request.params.flowId) });
@@ -267,12 +289,11 @@ export function createRoutes(options: RoutesOptions) {
       return;
     }
     const run = (await scheduler.triggerNow(parsed.data.flowId)) as RunRecord;
-    response.status(run.status === 'failed' ? 422 : 200).json({ run });
+    respondWithRun(response, run);
   });
 
   router.post('/schedules/:flowId/trigger', async (request, response) => {
-    if (!isSafeId(request.params.flowId)) {
-      response.status(400).json({ error: 'Invalid flow id' });
+    if (!ensureSafeFlowId(request, response)) {
       return;
     }
     const flow = await options.storage.getFlow(request.params.flowId);
@@ -293,7 +314,7 @@ export function createRoutes(options: RoutesOptions) {
       return;
     }
     const run = result.result as RunRecord;
-    response.status(run.status === 'failed' ? 422 : 200).json({ run });
+    respondWithRun(response, run);
   });
 
   // A storage failure here propagates to the caller on purpose. The two callers
@@ -377,7 +398,7 @@ function artifactContentType(filePath: string): string {
 }
 
 function writeArtifact(dataDir: string) {
-  const artifactsDir = path.join(dataDir, 'artifacts');
+  const artifactsDir = artifactsDirFor(dataDir);
   return async (filePath: string, contents: string): Promise<{ path: string; bytes: number }> => {
     const safePath = resolveContainedPath(artifactsDir, filePath);
     await mkdir(path.dirname(safePath), { recursive: true });
@@ -387,31 +408,13 @@ function writeArtifact(dataDir: string) {
 }
 
 function failedRun(flowId: string, error: string): RunRecord {
-  const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    id: `failed-${nanoid()}`,
-    flowId,
-    status: 'failed',
-    startedAt: now,
-    endedAt: now,
-    steps: [],
-    outputFiles: [],
-    error
-  };
+  return makeTerminalRun({ flowId, status: 'failed', error });
 }
 
 function skippedRun(flowId: string): RunRecord {
-  const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    id: `skipped-${nanoid()}`,
+  return makeTerminalRun({
     flowId,
     status: 'skipped',
-    startedAt: now,
-    endedAt: now,
-    steps: [],
-    outputFiles: [],
     error: 'Skipped because a previous run is still in flight'
-  };
+  });
 }

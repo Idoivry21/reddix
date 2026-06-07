@@ -1,7 +1,8 @@
 import type { SocialItem } from './types';
+import { coerceNumber } from './values';
 
 export function applyLimit(items: SocialItem[], settings: Record<string, unknown>): SocialItem[] {
-  const limit = numberSetting(settings.limit, items.length);
+  const limit = coerceNumber(settings.limit, items.length);
   return items.slice(0, Math.max(0, limit));
 }
 
@@ -24,13 +25,13 @@ export function applyEngagementFilter(
   settings: Record<string, unknown>
 ): SocialItem[] {
   const thresholds = {
-    score: numberSetting(settings.minScore, 0),
-    comments: numberSetting(settings.minComments, 0),
-    replies: numberSetting(settings.minReplies, 0),
-    likes: numberSetting(settings.minLikes, 0),
-    retweets: numberSetting(settings.minRetweets, 0),
-    bookmarks: numberSetting(settings.minBookmarks, 0),
-    views: numberSetting(settings.minViews, 0)
+    score: coerceNumber(settings.minScore, 0),
+    comments: coerceNumber(settings.minComments, 0),
+    replies: coerceNumber(settings.minReplies, 0),
+    likes: coerceNumber(settings.minLikes, 0),
+    retweets: coerceNumber(settings.minRetweets, 0),
+    bookmarks: coerceNumber(settings.minBookmarks, 0),
+    views: coerceNumber(settings.minViews, 0)
   };
 
   return items.filter((item) => {
@@ -59,7 +60,7 @@ function sortValue(item: SocialItem, field: string): number {
     return Number.isNaN(time) ? 0 : time;
   }
   const value = item.engagement[field as keyof SocialItem['engagement']];
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return coerceNumber(value, 0);
 }
 
 /**
@@ -79,16 +80,6 @@ export function applyMerge(items: SocialItem[]): SocialItem[] {
     merged.push(item);
   }
   return merged;
-}
-
-function numberSetting(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
-    return Number(value);
-  }
-  return fallback;
 }
 
 function stringSetting(value: unknown): string {

@@ -22,12 +22,12 @@ describe('TopBar provider health', () => {
   });
 
   it('shows a checking state while loading', () => {
-    render(<TopBar lastSavedAt="Saved" onRun={vi.fn()} healthLoading />);
+    render(<TopBar lastSavedAt="Saved" onRun={vi.fn()} isHealthLoading />);
     expect(screen.getByText(/checking/i)).toBeInTheDocument();
   });
 
   it('shows an error state when health is unavailable', () => {
-    render(<TopBar lastSavedAt="Saved" onRun={vi.fn()} healthError />);
+    render(<TopBar lastSavedAt="Saved" onRun={vi.fn()} hasHealthError />);
     expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
   });
 });

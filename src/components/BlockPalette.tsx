@@ -3,8 +3,7 @@ import { listBlockSpecs } from '../shared/commandBuilders';
 import { buildPaletteGroups, iconForBlock, type AccentKey } from '../blockVisuals';
 import { Icon } from '../icons';
 import type { BlockSpec } from '../shared/types';
-
-const BLOCK_DRAG_MIME = 'application/reddix-block';
+import { BLOCK_DRAG_MIME } from '../dragMime';
 
 interface BlockPaletteProps {
   onAddBlock: (blockType: string) => void;

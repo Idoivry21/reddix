@@ -1,4 +1,5 @@
 import type { SocialItem } from './types';
+import { isBlank } from './values';
 
 interface InputBinding {
   fieldKey: string;
@@ -69,8 +70,4 @@ function firstInputValue(items: SocialItem[], binding: InputBinding): string | n
     }
   }
   return null;
-}
-
-function isBlank(value: unknown): boolean {
-  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
 }

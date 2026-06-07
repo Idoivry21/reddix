@@ -8,7 +8,7 @@ import { ScheduleModal } from './components/ScheduleModal';
 import { Dashboard } from './components/Dashboard';
 import { ToastViewport } from './components/ToastViewport';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
-import { useWorkbenchState } from './hooks/useFlowState';
+import { useWorkbenchState } from './hooks/useWorkbenchState';
 import { useProviderHealth } from './hooks/useProviderHealth';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
@@ -25,17 +25,16 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      const tag = (event.target as HTMLElement | null)?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-          event.preventDefault();
-          document.getElementById('palette-search')?.focus();
-        }
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      // The palette shortcut fires regardless of focus context, so handle it
+      // before the editable-element guard instead of duplicating it in both paths.
+      const isPaletteShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k';
+      if (isPaletteShortcut) {
         event.preventDefault();
         document.getElementById('palette-search')?.focus();
+        return;
+      }
+      const tag = (event.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -73,8 +72,8 @@ export function App() {
         onOpenDashboard={workbench.openDashboard}
         onOpenSchedule={() => workbench.setShowSchedule(true)}
         providers={health.providers}
-        healthLoading={health.loading}
-        healthError={health.error}
+        isHealthLoading={health.isLoading}
+        hasHealthError={health.hasError}
         theme={theme}
         onToggleTheme={toggleTheme}
         readOnly={readOnly}
@@ -127,8 +126,8 @@ export function App() {
         onTabChange={(activeTab) => workbench.setConsoleState((state) => ({ ...state, activeTab }))}
         height={workbench.consoleHeight}
         setHeight={workbench.setConsoleHeight}
-        collapsed={workbench.consoleCollapsed}
-        setCollapsed={workbench.setConsoleCollapsed}
+        isCollapsed={workbench.consoleCollapsed}
+        setIsCollapsed={workbench.setConsoleCollapsed}
         onClear={workbench.clearConsole}
         runState={workbench.runStatus.kind}
         progress={workbench.runProgress}
@@ -145,7 +144,7 @@ export function App() {
       {workbench.showDashboard ? (
         <Dashboard
           flows={workbench.dashboardFlows}
-          currentId={workbench.activeFlowId}
+          activeFlowId={workbench.activeFlowId}
           onOpen={(id) => workbench.openFlow(id)}
           onClose={() => workbench.setShowDashboard(false)}
           onNew={workbench.newFlow}

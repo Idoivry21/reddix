@@ -16,6 +16,10 @@ export function useModalA11y<T extends HTMLElement>(onClose: () => void): React.
   onCloseRef.current = onClose;
 
   useEffect(() => {
+    // Intentionally runs once ([] deps): it reads ref.current at mount, so the
+    // caller must render the dialog (with this ref attached) unconditionally while
+    // open — a container that mounts on a later render would not get wired. The
+    // onCloseRef indirection is what lets onClose stay out of the dep array.
     const container = ref.current;
     if (!container) {
       return;

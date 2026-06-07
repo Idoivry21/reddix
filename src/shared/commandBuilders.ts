@@ -1,6 +1,7 @@
 import { blockSpecs, blockSpecByType } from './blockSpecs';
 import { CLI_PROVIDERS } from './providers';
 import type { BlockSpec, BuiltCommand, CommandBuildInput, FieldSpec } from './types';
+import { coerceNumber, isBlank } from './values';
 
 export function listBlockSpecs(): BlockSpec[] {
   return blockSpecs;
@@ -96,6 +97,23 @@ export function getProviderHealthCommands() {
   }));
 }
 
+// Per-provider command wrappers: set provider + executable and the load-bearing
+// `displayArgv: [...argv]` copy (the redaction boundary) in one place, so each
+// builder only has to construct its argv.
+const redditCommand = (argv: string[]): BuiltCommand => ({
+  provider: 'reddit',
+  executable: 'rdt',
+  argv,
+  displayArgv: [...argv]
+});
+
+const twitterCommand = (argv: string[]): BuiltCommand => ({
+  provider: 'twitter',
+  executable: 'twitter',
+  argv,
+  displayArgv: [...argv]
+});
+
 function buildRedditSearch(settings: Record<string, unknown>): BuiltCommand {
   const argv = compact([
     'search',
@@ -111,7 +129,7 @@ function buildRedditSearch(settings: Record<string, unknown>): BuiltCommand {
     '--compact',
     '--json'
   ]);
-  return { provider: 'reddit', executable: 'rdt', argv, displayArgv: [...argv] };
+  return redditCommand(argv);
 }
 
 function buildRedditSubreddit(settings: Record<string, unknown>): BuiltCommand {
@@ -127,13 +145,13 @@ function buildRedditSubreddit(settings: Record<string, unknown>): BuiltCommand {
     '--compact',
     '--json'
   ]);
-  return { provider: 'reddit', executable: 'rdt', argv, displayArgv: [...argv] };
+  return redditCommand(argv);
 }
 
 function buildRedditPopularAll(settings: Record<string, unknown>): BuiltCommand {
   const listing = stringSetting(settings, 'listing', 'popular') === 'all' ? 'all' : 'popular';
   const argv = [listing, '--limit', numberSetting(settings, 'limit', 50).toString(), '--compact', '--json'];
-  return { provider: 'reddit', executable: 'rdt', argv, displayArgv: [...argv] };
+  return redditCommand(argv);
 }
 
 function buildRedditReadPost(settings: Record<string, unknown>): BuiltCommand {
@@ -143,7 +161,7 @@ function buildRedditReadPost(settings: Record<string, unknown>): BuiltCommand {
     boolSetting(settings, 'expandMore') && '--expand-more',
     '--json'
   ]);
-  return { provider: 'reddit', executable: 'rdt', argv, displayArgv: [...argv] };
+  return redditCommand(argv);
 }
 
 function buildTwitterSearch(settings: Record<string, unknown>): BuiltCommand {
@@ -167,7 +185,7 @@ function buildTwitterSearch(settings: Record<string, unknown>): BuiltCommand {
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterTimeline(settings: Record<string, unknown>): BuiltCommand {
@@ -180,7 +198,7 @@ function buildTwitterTimeline(settings: Record<string, unknown>): BuiltCommand {
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterBookmarks(settings: Record<string, unknown>): BuiltCommand {
@@ -191,7 +209,7 @@ function buildTwitterBookmarks(settings: Record<string, unknown>): BuiltCommand 
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterUserTweets(settings: Record<string, unknown>): BuiltCommand {
@@ -203,7 +221,7 @@ function buildTwitterUserTweets(settings: Record<string, unknown>): BuiltCommand
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterListTimeline(settings: Record<string, unknown>): BuiltCommand {
@@ -213,7 +231,7 @@ function buildTwitterListTimeline(settings: Record<string, unknown>): BuiltComma
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterTweetDetail(settings: Record<string, unknown>): BuiltCommand {
@@ -223,18 +241,18 @@ function buildTwitterTweetDetail(settings: Record<string, unknown>): BuiltComman
     boolSetting(settings, 'fullText') && '--full-text',
     '--json'
   ]);
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterUserProfile(settings: Record<string, unknown>): BuiltCommand {
   const argv = ['user', stringSetting(settings, 'handle', ''), '--json'];
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function buildTwitterArticle(settings: Record<string, unknown>): BuiltCommand {
   const format = stringSetting(settings, 'format', 'json') === 'markdown' ? '--markdown' : '--json';
   const argv = ['article', stringSetting(settings, 'articleIdOrUrl', ''), format];
-  return { provider: 'twitter', executable: 'twitter', argv, displayArgv: [...argv] };
+  return twitterCommand(argv);
 }
 
 function setting(settings: Record<string, unknown>, key: string): string | undefined {
@@ -247,14 +265,7 @@ function stringSetting(settings: Record<string, unknown>, key: string, fallback:
 }
 
 function numberSetting(settings: Record<string, unknown>, key: string, fallback: number): number {
-  const value = settings[key];
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
-    return Number(value);
-  }
-  return fallback;
+  return coerceNumber(settings[key], fallback);
 }
 
 function boolSetting(settings: Record<string, unknown>, key: string): boolean {
@@ -293,14 +304,10 @@ function validateFieldValue(
   if (typeof value !== 'string') {
     return [`${field.label} must be text`];
   }
-  if (options.rejectFlagLikeStrings && spec.command && value.trim().startsWith('-')) {
+  if (options.rejectFlagLikeStrings && spec.executable && value.trim().startsWith('-')) {
     return [`${field.label} cannot start with "-"`];
   }
   return [];
-}
-
-function isBlank(value: unknown): boolean {
-  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
 }
 
 function compact(values: Array<string | false | undefined>): string[] {

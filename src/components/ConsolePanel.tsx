@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { ConsoleRunStep, ConsoleState } from '../api';
 import type { RunStatusKind } from '../flowTypes';
+import { Icon } from '../icons';
+import { MAX_SAMPLE_ROWS } from '../shared/runLimits';
 import { Tabs, tabId, tabPanelId } from './Tabs';
 
 interface ConsolePanelProps {
@@ -8,8 +10,8 @@ interface ConsolePanelProps {
   onTabChange: (tab: ConsoleState['activeTab']) => void;
   height?: number;
   setHeight?: (height: number) => void;
-  collapsed?: boolean;
-  setCollapsed?: (collapsed: boolean) => void;
+  isCollapsed?: boolean;
+  setIsCollapsed?: (isCollapsed: boolean) => void;
   onClear?: () => void;
   runState?: RunStatusKind;
   progress?: { done: number; total: number };
@@ -19,14 +21,17 @@ const TABS: ConsoleState['activeTab'][] = ['Logs', 'Output Preview', 'Command Tr
 
 const MIN_HEIGHT = 120;
 const COLLAPSED_HEIGHT = 40;
+// Space reserved at the top of the viewport (topbar + console head) so a resized
+// dock never fully covers the canvas.
+const VIEWPORT_RESERVE = 140;
 
 export function ConsolePanel({
   state,
   onTabChange,
   height = 208,
   setHeight,
-  collapsed = false,
-  setCollapsed,
+  isCollapsed = false,
+  setIsCollapsed,
   onClear,
   runState = 'idle',
   progress
@@ -49,7 +54,10 @@ export function ConsolePanel({
       if (!resizing.current) {
         return;
       }
-      const next = Math.max(MIN_HEIGHT, Math.min(window.innerHeight - 140, resizing.current.h + (resizing.current.y - moveEvent.clientY)));
+      const next = Math.max(
+        MIN_HEIGHT,
+        Math.min(window.innerHeight - VIEWPORT_RESERVE, resizing.current.h + (resizing.current.y - moveEvent.clientY))
+      );
       setHeight(next);
     };
     const up = (): void => {
@@ -61,11 +69,11 @@ export function ConsolePanel({
     window.addEventListener('pointerup', up);
   };
 
-  const dockHeight = collapsed ? COLLAPSED_HEIGHT : height;
+  const dockHeight = isCollapsed ? COLLAPSED_HEIGHT : height;
 
   return (
     <section className="console" aria-label="Run console" style={{ height: dockHeight }}>
-      {!collapsed && setHeight ? <div className="console-resize" onPointerDown={startResize} /> : null}
+      {!isCollapsed && setHeight ? <div className="console-resize" onPointerDown={startResize} /> : null}
       <div className="console-head">
         <div className="console-tabs">
           <Tabs
@@ -73,7 +81,7 @@ export function ConsolePanel({
             active={state.activeTab}
             onChange={(tab) => {
               onTabChange(tab as ConsoleState['activeTab']);
-              setCollapsed?.(false);
+              setIsCollapsed?.(false);
             }}
             label="Run console views"
             idPrefix="console"
@@ -99,25 +107,23 @@ export function ConsolePanel({
           </a>
         ) : null}
         <button className="console-btn" type="button" title="Clear logs" aria-label="Clear logs" onClick={onClear}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
-          </svg>
+          <Icon name="trash" size={15} />
         </button>
-        {setCollapsed ? (
+        {setIsCollapsed ? (
           <button
             className="console-btn"
             type="button"
-            title={collapsed ? 'Expand' : 'Collapse'}
-            aria-label={collapsed ? 'Expand console' : 'Collapse console'}
-            onClick={() => setCollapsed(!collapsed)}
+            title={isCollapsed ? 'Expand' : 'Collapse'}
+            aria-label={isCollapsed ? 'Expand console' : 'Collapse console'}
+            onClick={() => setIsCollapsed(!isCollapsed)}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: collapsed ? 'rotate(180deg)' : 'none' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'none' }}>
               <path d="m6 9 6 6 6-6" />
             </svg>
           </button>
         ) : null}
       </div>
-      {!collapsed ? (
+      {!isCollapsed ? (
         <div
           className="console-body"
           ref={bodyRef}
@@ -225,17 +231,17 @@ function ResultTable({ rows }: { rows: Array<Record<string, string | number | nu
       </div>
     );
   }
-  const capped = rows.length >= 50;
+  const capped = rows.length >= MAX_SAMPLE_ROWS;
   return (
     <div className="out-table-wrap">
       <div className="out-caption">
         {rows.length} row{rows.length === 1 ? '' : 's'}
-        {capped ? ' · showing first 50' : ''}
+        {capped ? ` · showing first ${MAX_SAMPLE_ROWS}` : ''}
       </div>
       <table className="out-table">
         <thead>
           <tr>
-            <th>kind</th>
+            <th>platform</th>
             <th>title / body</th>
             <th>author</th>
             <th>score</th>
@@ -246,8 +252,8 @@ function ResultTable({ rows }: { rows: Array<Record<string, string | number | nu
           {rows.map((row, index) => {
             const url = typeof row.url === 'string' ? row.url : null;
             return (
-              <tr key={`${index}-${row.kind}-${row.id ?? row.title}`}>
-                <td>{row.kind}</td>
+              <tr key={`${index}-${row.platform}-${row.id ?? row.title}`}>
+                <td>{row.platform}</td>
                 <td className="out-title">
                   {url ? (
                     <a href={url} target="_blank" rel="noopener noreferrer">

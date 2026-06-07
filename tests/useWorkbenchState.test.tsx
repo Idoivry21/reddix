@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useWorkbenchState } from '../src/hooks/useFlowState';
+import { useWorkbenchState } from '../src/hooks/useWorkbenchState';
 import type { RunRecord } from '../src/shared/types';
 
 const runWithReport: RunRecord = {
