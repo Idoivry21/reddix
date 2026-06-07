@@ -28,6 +28,10 @@ export function isCrossSiteMutation(method: string, secFetchSite: string | undef
     return false;
   }
 
+  return isCrossSiteBrowserRequest(secFetchSite);
+}
+
+export function isCrossSiteBrowserRequest(secFetchSite: string | undefined): boolean {
   if (!secFetchSite) {
     return false;
   }

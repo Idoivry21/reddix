@@ -5,9 +5,10 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../server/app';
 import { createStorage } from '../server/storage';
+import { getProviderHealthCommands } from '../src/shared/commandBuilders';
 
 let server: http.Server | null = null;
 
@@ -18,13 +19,28 @@ afterEach(async () => {
   }
 });
 
-async function start(dataDir: string): Promise<string> {
-  const { app } = createApp({ storage: createStorage({ baseDir: dataDir }), dataDir });
-  return new Promise((resolve) => {
-    server = app.listen(0, '127.0.0.1', () => {
-      const address = server!.address() as AddressInfo;
+type AppOptions = Partial<Parameters<typeof createApp>[0]>;
+
+async function start(dataDir: string, options: AppOptions = {}): Promise<string> {
+  const { app } = createApp({
+    storage: createStorage({ baseDir: dataDir }),
+    dataDir,
+    providerHealthChecker: async () => false,
+    ...options
+  });
+  return new Promise((resolve, reject) => {
+    const localServer = app.listen(0, '127.0.0.1', () => {
+      const address = localServer.address();
+      if (!address || typeof address === 'string') {
+        reject(new Error('Test server failed to listen'));
+        return;
+      }
       resolve(`http://127.0.0.1:${address.port}`);
     });
+    localServer.once('error', (error) => {
+      reject(error);
+    });
+    server = localServer;
   });
 }
 
@@ -60,6 +76,21 @@ describe('GET /api/health (finding 5)', () => {
     expect(response.status).toBe(503);
     expect(body.ok).toBe(false);
     expect(body.storage.writable).toBe(false);
+  });
+
+  it('dedupes concurrent provider probes and reuses the cached health snapshot', async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'reddix-health-'));
+    const providerHealthChecker = vi.fn(async () => true);
+    const base = await start(dataDir, { providerHealthChecker, healthCacheTtlMs: 30_000 });
+
+    await Promise.all([
+      fetch(`${base}/api/health`),
+      fetch(`${base}/api/health`),
+      fetch(`${base}/api/health`)
+    ]);
+    await fetch(`${base}/api/health`);
+
+    expect(providerHealthChecker).toHaveBeenCalledTimes(getProviderHealthCommands().length);
   });
 });
 

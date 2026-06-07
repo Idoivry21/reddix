@@ -1,6 +1,9 @@
 import { PROVIDER_META } from './providers';
 import type { SocialItem } from './types';
+import { safeHref } from './urlSafety';
 import { coerceFiniteNumber } from './values';
+
+export { safeHref } from './urlSafety';
 
 export interface HtmlReportMeta {
   /** Flow name shown in the report header. */
@@ -22,27 +25,6 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-/**
- * Return `url` only when it parses as an `http:`/`https:` URL; otherwise null.
- * Blocks `javascript:`, `data:`, `vbscript:`, `mailto:`, and malformed values so
- * a stored URL cannot become an XSS or phishing vector when rendered as a link
- * or image source. The result is still attribute-escaped at the call site.
- */
-export function safeHref(url: unknown): string | null {
-  if (typeof url !== 'string' || url.length === 0) {
-    return null;
-  }
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return parsed.href;
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|bmp|svg)(\?|#|$)/i;

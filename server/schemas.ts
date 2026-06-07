@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_SCHEDULE_INTERVAL_MS, MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
 import { isSafeId } from './safeId';
 
 const safeIdSchema = z.string().refine(isSafeId, { message: 'Invalid id' });
@@ -24,7 +25,7 @@ const positionSchema = z.object({ x: z.number(), y: z.number() });
 
 const scheduleSchema = z.object({
   enabled: z.boolean(),
-  intervalMs: z.number().int().positive().optional(),
+  intervalMs: z.number().int().min(MIN_SCHEDULE_INTERVAL_MS).max(MAX_SCHEDULE_INTERVAL_MS).optional(),
   paused: z.boolean().optional(),
   nextRunAt: z.string().nullable().optional()
 });
@@ -42,7 +43,20 @@ const flowSchema = z.object({
 
 const flowPutBodySchema = z.object({ flow: flowSchema });
 
-const runPostBodySchema = z.object({ flowId: safeIdSchema });
+const runModeSchema = z.enum(['static', 'cached-upstream']);
+
+// A run targets a whole flow (no nodeId) or a single node in isolation (nodeId +
+// mode together). `nodeId` is a local node id, not a path-safe file id.
+const runPostBodySchema = z
+  .object({
+    flowId: safeIdSchema,
+    nodeId: localIdSchema.optional(),
+    mode: runModeSchema.optional()
+  })
+  .refine((body) => (body.nodeId === undefined) === (body.mode === undefined), {
+    message: 'nodeId and mode must be provided together',
+    path: ['mode']
+  });
 
 export type FlowPutBody = z.infer<typeof flowPutBodySchema>;
 export type RunPostBody = z.infer<typeof runPostBodySchema>;

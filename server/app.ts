@@ -22,6 +22,9 @@ interface CreateAppOptions {
   logger?: Logger;
   /** Shared metrics registry; created if not supplied. */
   metrics?: Metrics;
+  providerHealthChecker?: (executable: 'rdt' | 'twitter') => Promise<boolean>;
+  healthCacheTtlMs?: number;
+  healthMinIntervalMs?: number;
 }
 
 export interface CreatedApp {
@@ -42,7 +45,10 @@ export function createApp(options: CreateAppOptions): CreatedApp {
     storage: options.storage,
     dataDir: options.dataDir,
     logger,
-    metrics
+    metrics,
+    providerHealthChecker: options.providerHealthChecker,
+    healthCacheTtlMs: options.healthCacheTtlMs,
+    healthMinIntervalMs: options.healthMinIntervalMs
   });
 
   app.use(logger.requestLogger());

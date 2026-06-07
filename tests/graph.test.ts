@@ -20,7 +20,7 @@ const starterNodes = [
 ];
 
 describe('graph validation', () => {
-  it('allows compatible social item ports and rejects incompatible detail ports', () => {
+  it('allows compatible social item ports and rejects incompatible artifact ports', () => {
     expect(
       canConnect({
         sourceBlockType: 'reddit.searchPosts',
@@ -30,16 +30,26 @@ describe('graph validation', () => {
       })
     ).toEqual({ valid: true });
 
+    // Enrichment blocks emit SocialItem[] so their output can feed transforms/exports.
     expect(
       canConnect({
         sourceBlockType: 'twitter.tweetDetail',
-        sourcePortId: 'detail',
+        sourcePortId: 'items',
+        targetBlockType: 'transform.filterText',
+        targetPortId: 'items'
+      })
+    ).toEqual({ valid: true });
+
+    expect(
+      canConnect({
+        sourceBlockType: 'output.exportJson',
+        sourcePortId: 'artifact',
         targetBlockType: 'transform.filterText',
         targetPortId: 'items'
       })
     ).toEqual({
       valid: false,
-      reason: 'DetailObject cannot connect to SocialItem[]'
+      reason: 'FileArtifact cannot connect to SocialItem[]'
     });
   });
 
@@ -98,6 +108,49 @@ describe('graph validation', () => {
         { nodeId: 'unknown', message: 'Unknown block type: reddit.search' },
         { nodeId: 'search', message: 'Query cannot start with "-"' },
         { nodeId: 'search', message: 'Sort must be one of: relevance, hot, top, new, comments' }
+      ])
+    );
+  });
+
+  it('rejects export paths whose extension does not match the output block type', () => {
+    const result = validateFlow({
+      nodes: [
+        { id: 'search', type: 'reddit.searchPosts', settings: { query: 'cli', sort: 'relevance', timeRange: 'month', limit: 10 } },
+        { id: 'export', type: 'output.exportJson', settings: { path: 'outputs/payload.html', pretty: true } }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'export', sourcePortId: 'items', targetPortId: 'items' }]
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        { nodeId: 'export', message: 'Path must end with .json' }
+      ])
+    );
+  });
+
+  it('rejects unsafe URL-like CLI settings and overlong text before execution', () => {
+    const result = validateFlow({
+      nodes: [
+        {
+          id: 'article',
+          type: 'twitter.article',
+          settings: { articleIdOrUrl: 'http://169.254.169.254/latest/meta-data/', format: 'json' }
+        },
+        {
+          id: 'search',
+          type: 'twitter.searchTweets',
+          settings: { query: 'a'.repeat(4097), tab: 'latest', maxCount: 10 }
+        }
+      ],
+      edges: []
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        { nodeId: 'article', message: 'Article ID or URL must be an X/Twitter URL or id' },
+        { nodeId: 'search', message: 'Query must be at most 4096 characters' }
       ])
     );
   });

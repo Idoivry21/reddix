@@ -31,6 +31,10 @@ export interface FieldSpec {
   required?: boolean;
   min?: number;
   max?: number;
+  maxLength?: number;
+  pattern?: RegExp;
+  format?: 'twitter-id-or-url';
+  extensions?: string[];
   options?: FieldOption[];
   help?: string;
 }
@@ -114,6 +118,50 @@ export interface PersistedFlow extends FlowDefinition {
 
 export type StepStatus = 'success' | 'failed' | 'skipped';
 
+/** Which input a single-node run feeds the node: its own static settings, or the
+ *  cached output sample of its upstream nodes from the last full run. */
+export type SingleNodeMode = 'static' | 'cached-upstream';
+
+/**
+ * A redacted, capped projection of a normalized SocialItem carried on a RunStep so
+ * (a) the per-node I/O preview can render real rows and (b) a cached-upstream
+ * single-node run can reconstruct items to feed a downstream enrichment block.
+ * Strict superset of the fields the binding selectors and transforms read
+ * (id/url/author/platform/community/createdAt/engagement); like {@link RunSampleRow}
+ * it omits raw/media/links and caps long text so untrusted CLI payloads never bloat
+ * or poison persisted records. Absent fields are null, mirroring the SocialItem contract.
+ */
+export interface RunStepSampleItem {
+  platform: 'reddit' | 'twitter';
+  sourceBlockId: string;
+  id: string;
+  url: string | null;
+  author: string | null;
+  community: string | null;
+  title: string | null;
+  text: string;
+  createdAt: string;
+  engagement: SocialItem['engagement'];
+}
+
+/**
+ * Per-node I/O summary attached to a RunStep so the UI can show input/output/
+ * skipped counts and a field list without re-deriving them from the stdout summary.
+ * Absent on steps the engine did not instrument (back-compat).
+ */
+export interface RunStepIo {
+  /** Items the step received from upstream (after merge across incoming edges). */
+  inputCount: number;
+  /** Items the step produced. */
+  outputCount: number;
+  /** Items intentionally dropped: fan-out incompatibility skips + fan-out cap truncation. */
+  skippedCount: number;
+  /** Normalized field NAMES present across produced items (derived, never invented). */
+  normalizedFields: string[];
+  /** Capped, redacted sample of items this step produced. */
+  sampleItems: RunStepSampleItem[];
+}
+
 export interface RunStep {
   blockId: string;
   status: StepStatus;
@@ -124,6 +172,8 @@ export interface RunStep {
   startedAt: string;
   endedAt: string;
   error?: string | null;
+  /** Optional per-node I/O summary (added with the I/O-preview feature). */
+  io?: RunStepIo;
 }
 
 export interface OutputFile {
@@ -147,6 +197,21 @@ export interface RunSampleRow {
   url: string | null;
 }
 
+/**
+ * Provenance for the run `sample` so the Output Preview can caption it honestly:
+ * which block produced the previewed rows, whether they were written to a file,
+ * and the true item count before the {@link RunSampleRow} cap. Absent when the
+ * flow produced no data.
+ */
+export interface RunSampleMeta {
+  /** Label of the block that produced the previewed rows (e.g. "Tweet Detail"). */
+  sourceLabel: string;
+  /** True only when an Export block wrote the rows to a file. */
+  saved: boolean;
+  /** Item count before the sample-row cap, so the caption can say "15 items". */
+  totalItems: number;
+}
+
 export interface RunRecord {
   schemaVersion: 1;
   id: string;
@@ -159,5 +224,9 @@ export interface RunRecord {
   error: string | null;
   /** Capped, redacted sample of the items the flow produced (optional for back-compat). */
   sample?: RunSampleRow[];
+  /** Provenance for {@link sample} (optional for back-compat). */
+  sampleMeta?: RunSampleMeta;
+  /** Present on isolated single-node runs so the console can label them; such runs
+   *  are NOT persisted to run history (ephemeral). Absent on full-flow runs. */
+  trigger?: { kind: 'single-node'; nodeId: string; mode: SingleNodeMode };
 }
-

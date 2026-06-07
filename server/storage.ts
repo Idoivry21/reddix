@@ -41,7 +41,8 @@ export function createStorage(options: StorageOptions) {
     async getFlow(flowId: string): Promise<PersistedFlow | null> {
       const filePath = safeSegmentPath(flowsDir, flowId, '.json');
       await ensureDirs();
-      return readJson<PersistedFlow | null>(filePath, null, logger);
+      const raw = await readJson<unknown>(filePath, null, logger);
+      return normalizePersistedFlow(raw, filePath, logger);
     },
 
     async listFlows(): Promise<PersistedFlow[]> {
@@ -50,7 +51,11 @@ export function createStorage(options: StorageOptions) {
       const flows = await Promise.all(
         files
           .filter((file) => file.endsWith('.json'))
-          .map((file) => readJson<PersistedFlow | null>(path.join(flowsDir, file), null, logger))
+          .map(async (file) => {
+            const filePath = path.join(flowsDir, file);
+            const raw = await readJson<unknown>(filePath, null, logger);
+            return normalizePersistedFlow(raw, filePath, logger);
+          })
       );
       return flows.filter((flow): flow is PersistedFlow => flow !== null);
     },
@@ -59,7 +64,7 @@ export function createStorage(options: StorageOptions) {
       const filePath = safeSegmentPath(runsDir, run.flowId, '.json');
       await runWriteMutex.run(run.flowId, async () => {
         await ensureDirs();
-        const runs = await readJson<RunRecord[]>(filePath, [], logger);
+        const runs = normalizeRunList(await readJson<unknown>(filePath, [], logger), filePath, logger);
         const capped = [...runs, run].slice(-maxRunsPerFlow);
         await writeJson(filePath, capped, logger);
       });
@@ -68,7 +73,7 @@ export function createStorage(options: StorageOptions) {
     async listRuns(flowId: string): Promise<RunRecord[]> {
       const filePath = safeSegmentPath(runsDir, flowId, '.json');
       await ensureDirs();
-      return readJson<RunRecord[]>(filePath, [], logger);
+      return normalizeRunList(await readJson<unknown>(filePath, [], logger), filePath, logger);
     },
 
     async getPreferences(): Promise<Preferences> {
@@ -94,6 +99,60 @@ export function createStorage(options: StorageOptions) {
       await writeJson(preferencesPath, preferences, logger);
     }
   };
+}
+
+function normalizePersistedFlow(value: unknown, filePath: string, logger?: EventLogger): PersistedFlow | null {
+  if (value === null) {
+    return null;
+  }
+  if (isPersistedFlow(value)) {
+    return value;
+  }
+  logger?.warn('storage.invalidShape', { path: filePath, expected: 'PersistedFlow' });
+  return null;
+}
+
+function normalizeRunList(value: unknown, filePath: string, logger?: EventLogger): RunRecord[] {
+  if (!Array.isArray(value)) {
+    logger?.warn('storage.invalidShape', { path: filePath, expected: 'RunRecord[]' });
+    return [];
+  }
+  const runs = value.filter(isRunRecord);
+  if (runs.length !== value.length) {
+    logger?.warn('storage.invalidShape', { path: filePath, expected: 'RunRecord[]' });
+  }
+  return runs;
+}
+
+function isPersistedFlow(value: unknown): value is PersistedFlow {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 1 &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    Array.isArray(value.nodes) &&
+    Array.isArray(value.edges) &&
+    isRecord(value.nodePositions) &&
+    isRecord(value.blockSettings) &&
+    isRecord(value.schedule) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string'
+  );
+}
+
+function isRunRecord(value: unknown): value is RunRecord {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 1 &&
+    typeof value.id === 'string' &&
+    typeof value.flowId === 'string' &&
+    (value.status === 'success' || value.status === 'failed' || value.status === 'skipped' || value.status === 'running') &&
+    typeof value.startedAt === 'string' &&
+    (typeof value.endedAt === 'string' || value.endedAt === null) &&
+    Array.isArray(value.steps) &&
+    Array.isArray(value.outputFiles) &&
+    (typeof value.error === 'string' || value.error === null)
+  );
 }
 
 async function readJson<T>(filePath: string, fallback: T, logger?: EventLogger): Promise<T> {
@@ -165,4 +224,3 @@ async function syncDirectory(dir: string): Promise<void> {
     }
   }
 }
-

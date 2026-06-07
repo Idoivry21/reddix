@@ -50,16 +50,19 @@ function fakeResponse(failOnWriteAfter: number | null = null, writeResult = true
   return state;
 }
 
-function fakeRequest(): Request {
+function fakeRequest(overrides: Partial<Request> = {}): Request {
   const handlers: Record<string, () => void> = {};
   return {
+    headers: {},
+    ip: '127.0.0.1',
     on(event: string, handler: () => void) {
       handlers[event] = handler;
       return this;
     },
     _emit(event: string) {
       handlers[event]?.();
-    }
+    },
+    ...overrides
   } as unknown as Request;
 }
 
@@ -128,6 +131,30 @@ describe('createSseHub', () => {
     const second = fakeResponse();
     hub.handler(fakeRequest(), first.response, vi.fn());
     hub.handler(fakeRequest(), second.response, vi.fn());
+
+    expect(hub.clientCount).toBe(1);
+    expect(second.status).toBe(503);
+    expect(second.ended).toBe(true);
+  });
+
+  it('rejects browser cross-site SSE connections', () => {
+    const hub = createSseHub();
+    const res = fakeResponse();
+
+    hub.handler(fakeRequest({ headers: { 'sec-fetch-site': 'cross-site' } } as Partial<Request>), res.response, vi.fn());
+
+    expect(res.status).toBe(403);
+    expect(res.ended).toBe(true);
+    expect(hub.clientCount).toBe(0);
+  });
+
+  it('caps SSE connections per remote address', () => {
+    const hub = createSseHub({ maxClientsPerRemote: 1 });
+    const first = fakeResponse();
+    const second = fakeResponse();
+
+    hub.handler(fakeRequest({ ip: '203.0.113.10' } as Partial<Request>), first.response, vi.fn());
+    hub.handler(fakeRequest({ ip: '203.0.113.10' } as Partial<Request>), second.response, vi.fn());
 
     expect(hub.clientCount).toBe(1);
     expect(second.status).toBe(503);

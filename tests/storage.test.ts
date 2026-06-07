@@ -110,6 +110,28 @@ describe('local JSON storage', () => {
     expect((await storage.listRuns('flow-1')).map((record) => record.id)).toEqual(['new']);
   });
 
+  it('treats valid JSON with the wrong run-list shape as empty before appending', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    await mkdir(path.join(dir, 'runs'), { recursive: true });
+    await writeFile(path.join(dir, 'runs', 'flow-1.json'), '{"not":"an array"}');
+    const storage = createStorage({ baseDir: dir });
+
+    await expect(storage.listRuns('flow-1')).resolves.toEqual([]);
+    await storage.appendRun(run('new', 'flow-1'));
+
+    expect((await storage.listRuns('flow-1')).map((record) => record.id)).toEqual(['new']);
+  });
+
+  it('skips valid JSON flow files that do not match the persisted flow shape', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    await mkdir(path.join(dir, 'flows'), { recursive: true });
+    await writeFile(path.join(dir, 'flows', 'broken.json'), '{"id":"broken"}');
+    const storage = createStorage({ baseDir: dir });
+
+    await expect(storage.getFlow('broken')).resolves.toBeNull();
+    await expect(storage.listFlows()).resolves.toEqual([]);
+  });
+
   it('migrates schema-less preferences on load', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
     await writeFile(

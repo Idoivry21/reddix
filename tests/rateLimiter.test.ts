@@ -31,4 +31,15 @@ describe('createRateLimiter', () => {
     expect(limiter.tryAcquire('b')).toBe(true);
     expect(limiter.tryAcquire('a')).toBe(false);
   });
+
+  it('evicts stale keys so long-running processes do not retain every flow id forever', () => {
+    let t = 1000;
+    const limiter = createRateLimiter({ minIntervalMs: 100, ttlMs: 500, now: () => t });
+
+    expect(limiter.tryAcquire('old-flow')).toBe(true);
+    t = 2000;
+    expect(limiter.tryAcquire('new-flow')).toBe(true);
+
+    expect(limiter.size).toBe(1);
+  });
 });

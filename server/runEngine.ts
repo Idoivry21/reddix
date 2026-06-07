@@ -1,16 +1,33 @@
 import { nanoid } from 'nanoid';
-import { buildBlockCommand } from '../src/shared/commandBuilders';
+import { buildBlockCommand, getBlockSpec } from '../src/shared/commandBuilders';
 import { buildTimestampedExportPath, serializeCsv, serializeJson, serializeMarkdown } from '../src/shared/exporters';
 import { serializeHtml } from '../src/shared/htmlReport';
-import { resolveInputBoundSettings } from '../src/shared/inputBindings';
+import {
+  blankBoundFieldKeys,
+  resolveInputBoundSettings,
+  resolveInputBoundSettingsForItem
+} from '../src/shared/inputBindings';
 import type { FlowEdgeModel, FlowNodeModel } from '../src/shared/graph';
 import { validateFlow } from '../src/shared/graph';
 import { normalizeRedditPayload, normalizeTwitterPayload } from '../src/shared/normalizers';
 import { redactSecrets } from '../src/shared/redaction';
 import type { SecretMap } from '../src/shared/redaction';
-import { MAX_SAMPLE_ROWS } from '../src/shared/runLimits';
+import {
+  MAX_FANOUT_CALLS,
+  MAX_SAMPLE_ROWS,
+  MAX_SAMPLE_TEXT_CHARS,
+  MAX_STEP_SAMPLE_ITEMS
+} from '../src/shared/runLimits';
 import { applyEngagementFilter, applyFilterText, applyLimit, applyMerge, applySort } from '../src/shared/transforms';
-import type { RunSampleRow, SocialItem } from '../src/shared/types';
+import type {
+  BuiltCommand,
+  RunSampleMeta,
+  RunSampleRow,
+  RunStepIo,
+  RunStepSampleItem,
+  SingleNodeMode,
+  SocialItem
+} from '../src/shared/types';
 import type { EventLogger } from './logger';
 import { noopMetrics, type Metrics } from './metrics';
 import { makeTerminalRun } from './runRecord';
@@ -68,6 +85,8 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   // Capped, redacted preview of what the flow produced — last export wins,
   // mirroring how the latest HTML report is surfaced to the console.
   let sample: RunSampleRow[] = [];
+  // Provenance for the sample so the console can caption it (which node, saved?).
+  let sampleMeta: RunSampleMeta | undefined;
   let failed = false;
 
   const flowStart = now().getTime();
@@ -142,24 +161,32 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
       }
       if (outcome.sample) {
         sample = outcome.sample;
+        sampleMeta = { sourceLabel: getBlockSpec(node.type).label, saved: true, totalItems: inputItems.length };
       }
+
+      // Output nodes pass their input through (they consume items and write a
+      // file); transforms produce a new array. Either way the produced array is
+      // what the I/O preview reports and what `skippedCount` is measured against.
+      const producedItems = outcome.items ?? inputItems;
 
       // For transforms, log input vs output counts so "filter dropped 100→0"
       // (intentional) is distinguishable from "filter is broken" (a bug). For
       // mergeStreams this also surfaces how many duplicates were dropped.
       if (node.type.startsWith('transform.')) {
-        const outCount = data.get(node.id)?.length ?? 0;
         logger?.info('flow.transform', {
           flowId,
           blockId: node.id,
           type: node.type,
           inputCount: inputItems.length,
-          outputCount: outCount,
-          dropped: inputItems.length - outCount
+          outputCount: producedItems.length,
+          dropped: inputItems.length - producedItems.length
         });
       }
 
-      const step = makeStep(node.id, 'success', now, { startedAt: stepStarted });
+      const step = makeStep(node.id, 'success', now, {
+        startedAt: stepStarted,
+        io: makeStepIo(inputItems, producedItems, Math.max(0, inputItems.length - producedItems.length), redact)
+      });
       recordStep(step, node.type);
     } catch (error) {
       failed = true;
@@ -185,15 +212,28 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   }
 
   // Flows without an output node still get a preview: fall back to the largest
-  // collected dataset (the most-downstream data-producing node, approximately).
+  // collected dataset. Ties go to the later (more-downstream) node — `data` is
+  // populated in topological order — so the preview names the node closest to the
+  // end of the flow, which is what the user thinks of as "the output". Marked
+  // unsaved so the caption can tell the user nothing was written to a file.
   if (sample.length === 0) {
     let largest: SocialItem[] = [];
-    for (const items of data.values()) {
-      if (items.length > largest.length) {
+    let largestNodeId: string | null = null;
+    for (const [nodeId, items] of data.entries()) {
+      if (items.length >= largest.length) {
         largest = items;
+        largestNodeId = nodeId;
       }
     }
     sample = toSampleRows(largest, redact);
+    if (largestNodeId && largest.length > 0) {
+      const producer = nodes.find((node) => node.id === largestNodeId);
+      sampleMeta = {
+        sourceLabel: producer ? getBlockSpec(producer.type).label : largestNodeId,
+        saved: false,
+        totalItems: largest.length
+      };
+    }
   }
 
   const status = failed ? 'failed' : 'success';
@@ -221,7 +261,162 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     steps,
     outputFiles,
     error: failed ? 'One or more steps failed' : null,
-    sample
+    sample,
+    sampleMeta
+  };
+}
+
+export interface RunSingleNodeOptions {
+  flow: FlowDefinition;
+  nodeId: string;
+  mode: SingleNodeMode;
+  executor: CliExecutor;
+  secrets?: SecretMap;
+  now?: () => Date;
+  emit?: (event: { type: string; step?: RunStep }) => void;
+  logger?: EventLogger;
+  metrics?: Metrics;
+  /** Most recent persisted FULL run, used to source cached upstream samples in
+   *  'cached-upstream' mode. Null/absent when no prior run exists. */
+  priorRun?: RunRecord | null;
+}
+
+/**
+ * Run ONE node in isolation for debugging. `static` mode feeds it nothing (it
+ * runs on its own settings); `cached-upstream` mode feeds it the cached output
+ * sample of its immediate upstream nodes from the last full run. Output nodes do
+ * NOT write artifacts here — a "preview this node" action stays side-effect free.
+ * Returns a one-step RunRecord tagged as a single-node run; the route keeps these
+ * ephemeral (not persisted to flow history).
+ */
+export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunRecord> {
+  const now = options.now ?? (() => new Date());
+  const secrets = options.secrets ?? {};
+  const logger = options.logger;
+  const metrics = options.metrics ?? noopMetrics;
+  const flowId = options.flow.id;
+  const redact = (value: string): string => redactSecrets(value, secrets);
+  const redactArgv = (value: string[]): string[] => redactSecrets(value, secrets);
+  const startedAt = now().toISOString();
+
+  const validation = validateFlow(options.flow);
+  if (!validation.valid) {
+    return makeTerminalRun({
+      flowId,
+      status: 'failed',
+      error: validation.errors.map((error) => error.message).join('; '),
+      now
+    });
+  }
+
+  const node = options.flow.nodes.find((candidate) => candidate.id === options.nodeId);
+  if (!node) {
+    return makeTerminalRun({ flowId, status: 'failed', error: `Node ${options.nodeId} not found in flow`, now });
+  }
+
+  // Source inputs. static → none. cached-upstream → reconstruct items from the
+  // previous full run's per-node sample for each immediate upstream node.
+  let inputItems: SocialItem[] = [];
+  if (options.mode === 'cached-upstream') {
+    const upstreamIds = options.flow.edges
+      .filter((edge) => edge.target === node.id)
+      .map((edge) => edge.source);
+    if (upstreamIds.length === 0) {
+      // A source/standalone node has nothing upstream — behave like static.
+      logger?.info('runNode.noUpstream', { flowId, blockId: node.id });
+    } else if (!options.priorRun) {
+      return makeTerminalRun({
+        flowId,
+        status: 'failed',
+        error: 'No previous full run to source cached upstream from. Run the full flow first.',
+        now
+      });
+    } else {
+      const gathered: SocialItem[] = [];
+      for (const sourceId of upstreamIds) {
+        const step = options.priorRun.steps.find((candidate) => candidate.blockId === sourceId);
+        if (!step?.io) {
+          return makeTerminalRun({
+            flowId,
+            status: 'failed',
+            error: `Upstream node ${sourceId} has no cached output; run the full flow first.`,
+            now
+          });
+        }
+        gathered.push(...step.io.sampleItems.map(sampleItemToSocialItem));
+      }
+      inputItems = gathered;
+    }
+  }
+
+  const ctx: NodeRunContext = {
+    executor: options.executor,
+    // Single-node runs never touch disk — compute counts/sample, write nothing.
+    writeArtifact: async () => ({ path: '', bytes: 0 }),
+    flowName: options.flow.name,
+    flowId,
+    now,
+    redact,
+    redactArgv,
+    logger
+  };
+
+  const stepStarted = now().toISOString();
+  let step: RunStep;
+  let failed = false;
+  try {
+    if (isCliNode(node)) {
+      const outcome = await runCliNode(node, inputItems, stepStarted, ctx);
+      step = outcome.step;
+      failed = outcome.failed;
+    } else {
+      const local = await runLocalNode(node, inputItems, ctx);
+      const produced = local.items ?? inputItems;
+      step = makeStep(node.id, 'success', now, {
+        startedAt: stepStarted,
+        io: makeStepIo(inputItems, produced, Math.max(0, inputItems.length - produced.length), redact)
+      });
+    }
+  } catch (error) {
+    failed = true;
+    logger?.error('runNode.stepError', {
+      flowId,
+      blockId: node.id,
+      operation: operationOf(node),
+      detail: redact(error instanceof Error ? error.message : String(error))
+    });
+    step = makeStep(node.id, 'failed', now, {
+      startedAt: stepStarted,
+      error: redact(error instanceof Error ? error.message : String(error)),
+      io: makeStepIo(inputItems, [], 0, redact)
+    });
+  }
+
+  options.emit?.({ type: 'step', step });
+  metrics.increment('node_runs_total', { status: failed ? 'failed' : 'success' });
+  logger?.info('runNode.end', { flowId, blockId: node.id, mode: options.mode, status: step.status });
+
+  const sampleItems = step.io?.sampleItems ?? [];
+  return {
+    schemaVersion: 1,
+    id: nanoid(),
+    flowId,
+    status: failed ? 'failed' : 'success',
+    startedAt,
+    endedAt: now().toISOString(),
+    steps: [step],
+    outputFiles: [],
+    error: failed ? step.error ?? 'Node run failed' : null,
+    sample: stepSampleToRows(sampleItems),
+    sampleMeta:
+      sampleItems.length > 0
+        ? {
+            sourceLabel: getBlockSpec(node.type).label,
+            saved: false,
+            totalItems: step.io?.outputCount ?? sampleItems.length
+          }
+        : undefined,
+    trigger: { kind: 'single-node', nodeId: node.id, mode: options.mode }
   };
 }
 
@@ -237,12 +432,27 @@ interface NodeRunContext {
   logger?: EventLogger;
 }
 
+/** One CLI invocation's normalized outcome. `error !== null` marks a logical or
+ * exec failure; on success `items` carries the normalized payload. Used by both
+ * the single-call and fan-out paths so they share one execute/parse convention. */
+interface CliCallResult {
+  items: SocialItem[];
+  displayArgv: string[];
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  error: string | null;
+}
+
 /**
  * Run one CLI-backed node: build the argv, execute, and map the result to a
  * RunStep. Returns the (success or failed) step plus, on success, the normalized
- * items; `failed` tells the caller to block downstream nodes. The shared step
- * fields are built once (`base`) so the redaction/summary convention can't drift
- * between the success and failure records.
+ * items; `failed` tells the caller to block downstream nodes.
+ *
+ * A wired enrichment block with a blank input-bound field (e.g. Tweet Detail
+ * downstream of Search Tweets) fans out — one CLI call per distinct upstream item
+ * — instead of a single command. Otherwise the field carries a static value (or
+ * the block has no binding) and a single command runs as before.
  */
 async function runCliNode(
   node: FlowNodeModel,
@@ -250,17 +460,63 @@ async function runCliNode(
   stepStarted: string,
   ctx: NodeRunContext
 ): Promise<{ step: RunStep; items?: SocialItem[]; failed: boolean }> {
+  const blankKeys = blankBoundFieldKeys(node.type, node.settings);
+  if (blankKeys.length > 0 && inputItems.length > 0) {
+    return runFanOutCliNode(node, inputItems, blankKeys, stepStarted, ctx);
+  }
+
+  // resolveInputBoundSettings throws when a blank bound field has no upstream
+  // value to fill it (blank field + no incoming items) — the outer runFlow catch
+  // turns that into a failed step, as before.
   const settings = resolveInputBoundSettings(node.type, node.settings, inputItems);
   const command = buildBlockCommand({ blockId: node.id, blockType: node.type, settings });
-  const result = await ctx.executor(command);
+  const call = await executeCommand(command, node, ctx);
   const base = {
     blockId: node.id,
-    argv: ctx.redactArgv(command.displayArgv),
-    exitCode: result.exitCode,
-    stdoutSummary: summarizeStdout(ctx.redact(result.stdout)),
-    stderr: ctx.redact(result.stderr),
+    argv: ctx.redactArgv(call.displayArgv),
+    exitCode: call.exitCode,
+    stdoutSummary: summarizeStdout(ctx.redact(call.stdout)),
+    stderr: ctx.redact(call.stderr),
     startedAt: stepStarted,
     endedAt: ctx.now().toISOString()
+  };
+  if (call.error !== null) {
+    return {
+      step: {
+        ...base,
+        status: 'failed',
+        error: ctx.redact(call.error),
+        io: makeStepIo(inputItems, [], 0, ctx.redact)
+      },
+      failed: true
+    };
+  }
+  return {
+    step: { ...base, status: 'success', io: makeStepIo(inputItems, call.items, 0, ctx.redact) },
+    items: call.items,
+    failed: false
+  };
+}
+
+/**
+ * Execute a single built command and normalize its result. Recognizes the CLIs'
+ * `{ ok: false, error }` failure envelope and non-zero exits (surfaced via the
+ * returned `error`), warns on empty/unrecognized payloads, and otherwise returns
+ * normalized items. `parseJson` may throw on non-JSON stdout; the single-call
+ * path lets that propagate (preserving the operation-classed step-error log),
+ * while the fan-out path catches it per item.
+ */
+async function executeCommand(
+  command: BuiltCommand,
+  node: FlowNodeModel,
+  ctx: NodeRunContext
+): Promise<CliCallResult> {
+  const result = await ctx.executor(command);
+  const base = {
+    displayArgv: command.displayArgv,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr
   };
 
   // CLIs report logical failures via a `{ ok: false, error }` JSON envelope on
@@ -270,7 +526,7 @@ async function runCliNode(
   const envelopeError = parseEnvelopeError(result.stdout);
   if (result.exitCode !== 0 || envelopeError) {
     const message = envelopeError ?? (result.stderr.trim() || `Command exited with ${result.exitCode}`);
-    return { step: { ...base, status: 'failed', error: ctx.redact(message) }, failed: true };
+    return { ...base, items: [], error: message };
   }
 
   // Exit 0 with empty stdout is treated as "no results", but it can also mask an
@@ -298,7 +554,136 @@ async function runCliNode(
     command.provider === 'reddit'
       ? normalizeRedditPayload(payload, node.id, onUnrecognized)
       : normalizeTwitterPayload(payload, node.id, onUnrecognized);
-  return { step: { ...base, status: 'success' }, items, failed: false };
+  return { ...base, items, error: null };
+}
+
+/**
+ * Run an enrichment node once per distinct upstream item, binding its blank
+ * input field from each item. Continue-on-error within the fan-out: items that
+ * succeed are kept and forwarded; the node only fails (blocking downstream) when
+ * every call fails. Calls run sequentially — the per-call await is the inter-call
+ * spacing that keeps the app from out-running the CLIs' own rate limiting
+ * (security invariant 3). Results are aggregated into ONE RunStep so the
+ * one-step-per-node contract the UI/SSE rely on holds.
+ */
+async function runFanOutCliNode(
+  node: FlowNodeModel,
+  inputItems: SocialItem[],
+  blankKeys: string[],
+  stepStarted: string,
+  ctx: NodeRunContext
+): Promise<{ step: RunStep; items?: SocialItem[]; failed: boolean }> {
+  // Resolve each upstream item to per-item settings, skipping items that can't
+  // drive this block (e.g. wrong platform) and deduping by the bound value so the
+  // same id is never fetched twice.
+  const seen = new Set<string>();
+  const eligible: Record<string, unknown>[] = [];
+  let incompatibleSkipped = 0;
+  let dedupSkipped = 0;
+  for (const item of inputItems) {
+    const resolved = resolveInputBoundSettingsForItem(node.type, node.settings, item);
+    if (resolved === null) {
+      incompatibleSkipped += 1;
+      continue;
+    }
+    const key = blankKeys.map((fieldKey) => String(resolved[fieldKey])).join(' ');
+    if (seen.has(key)) {
+      dedupSkipped += 1;
+      continue;
+    }
+    seen.add(key);
+    eligible.push(resolved);
+  }
+
+  // Skip policy: by default incompatible items are dropped (counted, never
+  // silent). With `__bindPolicy: 'fail'` the whole node fails if ANY upstream
+  // item cannot drive it, so a misconfigured wire surfaces loudly instead of
+  // quietly enriching a subset.
+  if (bindPolicy(node.settings) === 'fail' && incompatibleSkipped > 0) {
+    const error = ctx.redact(`${incompatibleSkipped} upstream item(s) are incompatible with this block`);
+    return {
+      step: makeStep(node.id, 'failed', ctx.now, {
+        startedAt: stepStarted,
+        error,
+        io: makeStepIo(inputItems, [], incompatibleSkipped + dedupSkipped, ctx.redact)
+      }),
+      failed: true
+    };
+  }
+
+  if (eligible.length === 0) {
+    const error = ctx.redact(`No upstream item supplied a value for ${blankKeys.join(', ')}`);
+    return {
+      step: makeStep(node.id, 'failed', ctx.now, {
+        startedAt: stepStarted,
+        error,
+        io: makeStepIo(inputItems, [], incompatibleSkipped + dedupSkipped, ctx.redact)
+      }),
+      failed: true
+    };
+  }
+
+  const truncated = eligible.length > MAX_FANOUT_CALLS;
+  const skipped = truncated ? eligible.length - MAX_FANOUT_CALLS : 0;
+  const toRun = truncated ? eligible.slice(0, MAX_FANOUT_CALLS) : eligible;
+  if (truncated) {
+    ctx.logger?.warn('cli.fanoutTruncated', {
+      flowId: ctx.flowId,
+      blockId: node.id,
+      total: eligible.length,
+      cap: MAX_FANOUT_CALLS
+    });
+  }
+
+  const calls: CliCallResult[] = [];
+  for (const settings of toRun) {
+    const command = buildBlockCommand({ blockId: node.id, blockType: node.type, settings });
+    try {
+      calls.push(await executeCommand(command, node, ctx));
+    } catch (error) {
+      calls.push({
+        items: [],
+        displayArgv: command.displayArgv,
+        exitCode: 1,
+        stdout: '',
+        stderr: '',
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  const succeeded = calls.filter((call) => call.error === null);
+  const failures = calls.filter((call) => call.error !== null);
+  const items = succeeded.flatMap((call) => call.items);
+  const allFailed = succeeded.length === 0;
+  // Every input item that did not contribute to output: wrong-platform/no-value
+  // skips, dedup collisions, fan-out-cap truncation, and per-call failures.
+  const totalSkipped = incompatibleSkipped + dedupSkipped + skipped + failures.length;
+  const io = makeStepIo(inputItems, items, totalSkipped, ctx.redact);
+
+  const summaryParts = [`fan-out ${calls.length} item(s) → ${succeeded.length} enriched`];
+  if (failures.length > 0) {
+    summaryParts.push(`${failures.length} failed`);
+  }
+  if (truncated) {
+    summaryParts.push(`capped at ${MAX_FANOUT_CALLS} (${skipped} skipped)`);
+  }
+
+  const base = {
+    blockId: node.id,
+    argv: ctx.redactArgv(calls[0]?.displayArgv ?? []),
+    exitCode: allFailed ? failures.at(-1)?.exitCode ?? 1 : 0,
+    stdoutSummary: summarizeStdout(summaryParts.join(', ')),
+    stderr: summarizeStdout(ctx.redact(failures.map((call) => call.error ?? '').filter(Boolean).join('; '))),
+    startedAt: stepStarted,
+    endedAt: ctx.now().toISOString()
+  };
+
+  if (allFailed) {
+    const error = ctx.redact(failures[0]?.error ?? 'All fan-out calls failed');
+    return { step: { ...base, status: 'failed', error, io }, failed: true };
+  }
+  return { step: { ...base, status: 'success', io }, items, failed: false };
 }
 
 /**
@@ -376,6 +761,126 @@ function toSampleRows(
 
 function redactNullable(value: string | null, redact: (value: string) => string): string | null {
   return value === null ? null : redact(value);
+}
+
+/**
+ * Per-node I/O summary for a step: input/output/skipped counts plus a redacted,
+ * reconstruction-capable sample of the produced items. Shared by every node path
+ * so the preview and the cached-upstream feed read one consistent shape.
+ */
+function makeStepIo(
+  inputItems: SocialItem[],
+  outputItems: SocialItem[],
+  skippedCount: number,
+  redact: (value: string) => string
+): RunStepIo {
+  return {
+    inputCount: inputItems.length,
+    outputCount: outputItems.length,
+    skippedCount,
+    normalizedFields: collectFieldKeys(outputItems),
+    sampleItems: toStepSample(outputItems, redact)
+  };
+}
+
+/**
+ * Project items into the redacted, capped RunStepSampleItem shape. Mirrors
+ * toSampleRows' redaction invariant (security invariant 2) and caps long text, but
+ * keeps engagement/community/createdAt so a cached-upstream run can reconstruct a
+ * usable SocialItem.
+ */
+function toStepSample(
+  items: SocialItem[],
+  redact: (value: string) => string,
+  max = MAX_STEP_SAMPLE_ITEMS
+): RunStepSampleItem[] {
+  return items.slice(0, max).map((item) => ({
+    platform: item.platform,
+    sourceBlockId: item.sourceBlockId,
+    id: item.id,
+    url: redactNullable(item.url, redact),
+    author: redactNullable(item.author, redact),
+    community: redactNullable(item.community, redact),
+    title: redactNullable(item.title, redact),
+    text: redact(item.text).slice(0, MAX_SAMPLE_TEXT_CHARS),
+    createdAt: item.createdAt,
+    engagement: item.engagement
+  }));
+}
+
+/**
+ * Distinct normalized field names present (non-null/non-empty) across items.
+ * Derived from the items, never invented — absent SocialItem fields stay absent.
+ */
+function collectFieldKeys(items: SocialItem[]): string[] {
+  const present = new Set<string>();
+  for (const item of items) {
+    if (item.id) present.add('id');
+    if (item.url !== null) present.add('url');
+    if (item.author !== null) present.add('author');
+    if (item.community !== null) present.add('community');
+    if (item.title !== null) present.add('title');
+    if (item.body !== null) present.add('body');
+    if (item.text !== '') present.add('text');
+    if (item.createdAt) present.add('createdAt');
+    if (item.media.length > 0) present.add('media');
+    if (item.links.length > 0) present.add('links');
+    for (const [key, value] of Object.entries(item.engagement)) {
+      if (value !== null && value !== undefined) {
+        present.add(key);
+      }
+    }
+  }
+  return [...present];
+}
+
+/**
+ * Reconstruct a usable SocialItem from a persisted sample item so a
+ * cached-upstream single-node run can feed a downstream block. Fields dropped by
+ * the sample (raw/media/links/body) come back empty, matching the SocialItem contract.
+ */
+function sampleItemToSocialItem(sample: RunStepSampleItem): SocialItem {
+  return {
+    platform: sample.platform,
+    sourceBlockId: sample.sourceBlockId,
+    id: sample.id,
+    url: sample.url,
+    author: sample.author,
+    community: sample.community,
+    title: sample.title,
+    body: null,
+    text: sample.text,
+    createdAt: sample.createdAt,
+    engagement: sample.engagement,
+    media: [],
+    links: [],
+    raw: {}
+  };
+}
+
+/**
+ * Project already-redacted sample items into the run-level RunSampleRow preview
+ * shape. No re-redaction — the items were redacted when captured by toStepSample.
+ */
+function stepSampleToRows(items: RunStepSampleItem[]): RunSampleRow[] {
+  return items.map((item) => ({
+    platform: item.platform,
+    id: item.id,
+    title: item.title ?? (item.text || null),
+    author: item.author,
+    score: item.engagement.score ?? item.engagement.likes ?? null,
+    created: item.createdAt || null,
+    url: item.url
+  }));
+}
+
+/**
+ * Per-node binding skip policy. Default 'skip' (drop incompatible items, counted);
+ * 'fail' makes the node fail if any upstream item cannot drive it. Stored in
+ * node.settings under a non-field key so it never reaches argv or field validation.
+ */
+function bindPolicy(settings: Record<string, unknown>): 'skip' | 'fail' {
+  return settings.__bindPolicy === 'fail' ? 'fail' : 'skip';
 }
 
 function isCliNode(node: FlowNodeModel): boolean {

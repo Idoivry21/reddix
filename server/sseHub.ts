@@ -1,15 +1,19 @@
 import type { RequestHandler, Response } from 'express';
+import { isCrossSiteBrowserRequest } from './csrfGuard';
 import type { EventLogger } from './logger';
 
 interface SseClient {
   id: number;
   response: Response;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  remoteAddress: string;
 }
 
 interface SseHubOptions {
   /** Max concurrent SSE connections; further connections get 503. */
   maxClients?: number;
+  /** Max concurrent SSE connections per remote address. */
+  maxClientsPerRemote?: number;
   /** Heartbeat interval in ms; a comment ping keeps idle proxies from dropping the stream. */
   heartbeatMs?: number;
   /** Reconnect hint (ms) sent to the browser EventSource. */
@@ -26,6 +30,7 @@ interface SseHubOptions {
 }
 
 const DEFAULT_MAX_CLIENTS = 50;
+const DEFAULT_MAX_CLIENTS_PER_REMOTE = 6;
 const DEFAULT_HEARTBEAT_MS = 25_000;
 const DEFAULT_RETRY_MS = 3_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
@@ -46,6 +51,7 @@ export interface SseHub {
  */
 export function createSseHub(options: SseHubOptions = {}): SseHub {
   const maxClients = options.maxClients ?? DEFAULT_MAX_CLIENTS;
+  const maxClientsPerRemote = options.maxClientsPerRemote ?? DEFAULT_MAX_CLIENTS_PER_REMOTE;
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -84,7 +90,19 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
   }
 
   const handler: RequestHandler = (request, response) => {
+    const secFetchSite = firstHeader(request.headers?.['sec-fetch-site']);
+    if (isCrossSiteBrowserRequest(secFetchSite)) {
+      logger?.warn('sse.crossSiteBlocked', { secFetchSite });
+      response.status(403).end();
+      return;
+    }
     if (clients.size >= maxClients) {
+      response.status(503).end();
+      return;
+    }
+    const remoteAddress = request.ip ?? request.socket?.remoteAddress ?? 'unknown';
+    if (clientsForRemote(remoteAddress) >= maxClientsPerRemote) {
+      logger?.warn('sse.remoteLimited', { remoteAddress });
       response.status(503).end();
       return;
     }
@@ -94,7 +112,7 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
       Connection: 'keep-alive'
     });
     const id = clientId++;
-    const client: SseClient = { id, response, idleTimer: null };
+    const client: SseClient = { id, response, idleTimer: null, remoteAddress };
     client.idleTimer = setTimeout(() => {
       drop(client);
     }, idleTimeoutMs);
@@ -115,10 +133,21 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
   };
 
   function broadcast(event: string, payload: unknown): void {
-    const message = redact(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    const safePayload = redactPayload(payload, redact);
+    const message = redact(`event: ${event}\ndata: ${JSON.stringify(safePayload)}\n\n`);
     for (const client of [...clients.values()]) {
       safeWrite(client, message);
     }
+  }
+
+  function clientsForRemote(remoteAddress: string): number {
+    let count = 0;
+    for (const client of clients.values()) {
+      if (client.remoteAddress === remoteAddress) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   function pingAll(): void {
@@ -150,4 +179,30 @@ export function createSseHub(options: SseHubOptions = {}): SseHub {
       return clients.size;
     }
   };
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function redactPayload(value: unknown, redact: (value: string) => string, seen = new WeakSet<object>()): unknown {
+  if (typeof value === 'string') {
+    return redact(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactPayload(entry, redact, seen));
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+  if (seen.has(value)) {
+    return '[Circular]';
+  }
+  seen.add(value);
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    output[redact(key)] = redactPayload(entry, redact, seen);
+  }
+  seen.delete(value);
+  return output;
 }

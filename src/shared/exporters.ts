@@ -1,5 +1,6 @@
 import { PROVIDER_META } from './providers';
 import type { SocialItem } from './types';
+import { safeHref } from './urlSafety';
 
 const csvColumns = [
   'platform',
@@ -58,13 +59,22 @@ export function serializeMarkdown(items: SocialItem[]): string {
     // Use the canonical provider label so exports match the rest of the UI.
     const title = PROVIDER_META[platform as SocialItem['platform']]?.label ?? platform;
     const lines = groupItems.map((item) => {
-      const label = item.title ?? item.body ?? item.id;
-      const linked = item.url ? `[${label}](${item.url})` : label;
+      const label = escapeMarkdownLabel(item.title ?? item.body ?? item.id);
+      const href = safeHref(item.url);
+      const linked = href ? `[${label}](<${escapeMarkdownTarget(href)}>)` : label;
       return `- ${linked} — ${item.author ?? 'unknown author'}`;
     });
     return `## ${title}\n\n${lines.join('\n')}`;
   });
   return `# Social CLI Research Digest\n\n${sections.join('\n\n')}\n`;
+}
+
+function escapeMarkdownLabel(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/([\[\]()])/g, '\\$1').replace(/\r?\n/g, ' ');
+}
+
+function escapeMarkdownTarget(value: string): string {
+  return value.replace(/>/g, '%3E');
 }
 
 export function buildTimestampedExportPath(filePath: string, date: Date): string {

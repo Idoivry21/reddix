@@ -2,8 +2,10 @@ import path from 'node:path';
 import { createApp } from './app';
 import { validateEnv, summarizeAuthPresence } from './env';
 import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
+import { killAllCliChildren } from './executor';
 import { createLogger } from './logger';
 import { createMetrics } from './metrics';
+import { closeServer } from './serverLifecycle';
 import { createStorage } from './storage';
 
 /** Hard-kill the process if a graceful shutdown stalls past this window. */
@@ -33,6 +35,13 @@ const host = process.env.HOST ?? '127.0.0.1';
 const server = app.listen(port, host, () => {
   console.log(`Reddix backend listening on http://${host}:${port}`);
 });
+server.on('error', (error) => {
+  if (shuttingDown) {
+    return;
+  }
+  console.error('[reddix] server error:', formatFatalReason(error));
+  shutdown('server error', 1);
+});
 
 let shuttingDown = false;
 
@@ -43,7 +52,8 @@ function shutdown(reason: string, exitCode = 0): void {
   shuttingDown = true;
   console.log(`[reddix] shutting down (${reason})`);
   closeClients();
-  server.close(() => {
+  killAllCliChildren('SIGTERM');
+  closeServer(server, () => {
     process.exit(exitCode);
   });
   // Failsafe: force exit if the server does not close in time.

@@ -101,12 +101,14 @@ export function App() {
         onMoveNode={workbench.moveNode}
         onConnect={workbench.connect}
         onDeleteEdge={workbench.deleteEdge}
+        onSpliceNode={workbench.spliceNodeIntoEdge}
         onDropBlock={workbench.dropBlock}
         onPaneClick={workbench.clearSelection}
         onFit={workbench.fitView}
         onAddBlock={workbench.addBlock}
         dragType={workbench.dragType}
         readOnly={readOnly}
+        nodeIoPreview={workbench.nodeIoPreview}
       />
 
       {showInspector ? (
@@ -117,6 +119,11 @@ export function App() {
           }
           onDelete={() => workbench.selectedNode && workbench.deleteNode(workbench.selectedNode.id)}
           onDuplicate={() => workbench.selectedNode && workbench.duplicateNode(workbench.selectedNode.id)}
+          onRunNode={(mode) => workbench.selectedNode && workbench.runNode(workbench.selectedNode.id, mode)}
+          hasUpstream={workbench.selectedNode ? workbench.hasUpstream(workbench.selectedNode.id) : false}
+          hasCachedUpstream={workbench.selectedNode ? workbench.hasCachedUpstream(workbench.selectedNode.id) : false}
+          isRunning={workbench.isRunning}
+          preview={workbench.selectedNode ? workbench.nodeIoPreview[workbench.selectedNode.id] : undefined}
           readOnly={readOnly}
         />
       ) : null}

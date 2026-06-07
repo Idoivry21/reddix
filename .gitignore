@@ -34,3 +34,4 @@ playwright-report/
 .superpowers/
 harness.toml
 Plans.md
+docs/superpowers/*

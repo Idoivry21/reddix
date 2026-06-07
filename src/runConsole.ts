@@ -29,6 +29,7 @@ export function runRecordToConsoleState(
     steps: run.steps.map((step) => toConsoleStep(step, nodeTypeById[step.blockId])),
     logs: capLogs(buildLogs(run)),
     results: toResultRows(run.sample),
+    resultsMeta: run.sampleMeta,
     reportPath: latestHtmlReport(run),
     // Dedupe by run id: SSE onComplete and the REST response both map the same
     // run, so filter any existing entry for this id before prepending.
@@ -106,7 +107,8 @@ export function toConsoleStep(step: RunStep, blockType: string | undefined): Con
     argv: step.argv,
     exitCode: step.exitCode,
     stdoutSummary: step.stdoutSummary,
-    error: step.error
+    error: step.error,
+    io: step.io
   };
 }
 

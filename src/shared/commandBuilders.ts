@@ -304,10 +304,62 @@ function validateFieldValue(
   if (typeof value !== 'string') {
     return [`${field.label} must be text`];
   }
-  if (options.rejectFlagLikeStrings && spec.executable && value.trim().startsWith('-')) {
+  const text = value.trim();
+  if (field.maxLength !== undefined && text.length > field.maxLength) {
+    return [`${field.label} must be at most ${field.maxLength} characters`];
+  }
+  if (field.pattern && !field.pattern.test(text)) {
+    return [`${field.label} has an invalid format`];
+  }
+  if (field.format === 'twitter-id-or-url' && !isTwitterIdOrUrl(text)) {
+    return [`${field.label} must be an X/Twitter URL or id`];
+  }
+  if (field.type === 'path') {
+    const pathError = validatePathField(field, text);
+    if (pathError) {
+      return [pathError];
+    }
+  }
+  if (options.rejectFlagLikeStrings && spec.executable && text.startsWith('-')) {
     return [`${field.label} cannot start with "-"`];
   }
   return [];
+}
+
+function validatePathField(field: FieldSpec, value: string): string | null {
+  if (value.includes('\0')) {
+    return `${field.label} is invalid`;
+  }
+  if (value.startsWith('/') || value.includes('\\')) {
+    return `${field.label} must be a relative POSIX path`;
+  }
+  if (value.split('/').some((segment) => segment === '..')) {
+    return `${field.label} cannot contain ".."`;
+  }
+  const extensions = field.extensions ?? [];
+  if (extensions.length > 0 && !extensions.some((extension) => value.toLowerCase().endsWith(extension))) {
+    return `${field.label} must end with ${extensions.join(' or ')}`;
+  }
+  return null;
+}
+
+function isTwitterIdOrUrl(value: string): boolean {
+  if (/^[A-Za-z0-9_-]{1,256}$/.test(value)) {
+    return true;
+  }
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:') {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    return host === 'x.com' || host.endsWith('.x.com') || host === 'twitter.com' || host.endsWith('.twitter.com');
+  } catch {
+    return false;
+  }
 }
 
 function compact(values: Array<string | false | undefined>): string[] {

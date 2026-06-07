@@ -1,5 +1,16 @@
-import type { BuiltCommand, PersistedFlow, RunRecord } from './shared/types';
+import type {
+  BuiltCommand,
+  PersistedFlow,
+  RunRecord,
+  RunSampleMeta,
+  RunStepIo,
+  SingleNodeMode
+} from './shared/types';
 import type { FlowRequestBody } from './flowSerialization';
+
+/** How a single-node run sources its input: the node's own settings, or the
+ *  cached upstream sample from the last full run. */
+export type RunNodeMode = SingleNodeMode;
 
 export interface ConsoleRunStep {
   id: string;
@@ -12,6 +23,8 @@ export interface ConsoleRunStep {
   exitCode?: number | null;
   stdoutSummary?: string;
   error?: string | null;
+  /** Per-node I/O summary (counts + redacted sample), when the step recorded one. */
+  io?: RunStepIo;
 }
 
 export interface ConsoleHistoryEntry {
@@ -28,6 +41,8 @@ export interface ConsoleState {
   steps: ConsoleRunStep[];
   logs: string[];
   results: Array<Record<string, string | number | null>>;
+  /** Provenance for the preview rows: which block produced them and whether saved. */
+  resultsMeta?: RunSampleMeta;
   history: ConsoleHistoryEntry[];
   runLabel: string;
   /** Relative artifact path of the most recent HTML report, if a run produced one. */
@@ -124,6 +139,30 @@ export async function postRun(flowId: string): Promise<RunRecord> {
   // error. Surface the server's error message when it provided one.
   if (!payload.run) {
     throw new Error(payload.error ?? `Run failed (status ${response.status})`);
+  }
+  return payload.run;
+}
+
+/**
+ * Run a SINGLE node in isolation. `static` runs it on its own settings; `cached-upstream`
+ * feeds it the cached output sample of its upstream nodes from the last full run.
+ * Returns a one-step RunRecord; the backend keeps these ephemeral (not in run history).
+ */
+export async function postRunNode(flowId: string, nodeId: string, mode: RunNodeMode): Promise<RunRecord> {
+  const response = await fetch('/api/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flowId, nodeId, mode })
+  });
+  let payload: { run?: RunRecord; error?: string };
+  try {
+    payload = (await response.json()) as { run?: RunRecord; error?: string };
+  } catch {
+    throw new Error(`Run node request failed (status ${response.status})`);
+  }
+  // Mirror postRun: a 422 still carries a failed RunRecord; only a missing run is fatal.
+  if (!payload.run) {
+    throw new Error(payload.error ?? `Run node failed (status ${response.status})`);
   }
   return payload.run;
 }

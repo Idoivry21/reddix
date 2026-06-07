@@ -46,6 +46,19 @@ describe('SSE sink redaction (finding 13)', () => {
     expect(sent).toContain('[REDACTED]');
   });
 
+  it('scrubs secrets before JSON escaping can change their byte sequence', () => {
+    const secret = 'token"with\\json';
+    const hub = createSseHub({ redact: (value) => value.split(secret).join('[REDACTED]') });
+    const client = fakeResponse();
+    hub.handler(fakeRequest(), client.response, vi.fn());
+
+    hub.broadcast('run-step', { leak: secret });
+
+    const sent = client.writes.join('');
+    expect(sent).not.toContain('token');
+    expect(sent).toContain('[REDACTED]');
+  });
+
   it('logs a socket error distinctly from a clean close (finding 21)', () => {
     const lines: Array<{ message: string }> = [];
     const logger = {

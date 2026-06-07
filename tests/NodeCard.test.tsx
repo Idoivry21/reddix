@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { NodeCard } from '../src/components/NodeCard';
-import type { NodeStatus, WorkbenchNode } from '../src/flowTypes';
+import type { NodeIoPreview, NodeStatus, WorkbenchNode } from '../src/flowTypes';
 
 function makeNode(status: NodeStatus): WorkbenchNode {
   return {
@@ -33,10 +33,54 @@ describe('NodeCard status', () => {
   });
 
   it('renders the block title, source-coded accent, and summary', () => {
-    const { container } = render(<NodeCard node={makeNode('idle')} isSelected onMeasure={vi.fn()} />);
+    const { container } = render(<NodeCard node={makeNode('idle')} isSelected onMeasure={vi.fn()} onSelect={vi.fn()} />);
     expect(screen.getByText('Search Reddit')).toBeInTheDocument();
     expect(container.querySelector('.node.cat-reddit')).not.toBeNull();
     expect(container.querySelector('.node.selected')).not.toBeNull();
     expect(screen.getByText('cats')).toBeInTheDocument();
+  });
+});
+
+describe('NodeCard io preview badges', () => {
+  function preview(overrides: Partial<NodeIoPreview> = {}): NodeIoPreview {
+    return {
+      status: 'success',
+      inputCount: 5,
+      outputCount: 3,
+      skippedCount: 2,
+      normalizedFields: ['id'],
+      sampleItems: [],
+      ...overrides
+    };
+  }
+
+  it('shows count badges with a non-color accessible label after a run', () => {
+    render(
+      <NodeCard node={makeNode('success')} isSelected={false} onMeasure={vi.fn()} onSelect={vi.fn()} preview={preview()} />
+    );
+    expect(screen.getByText('3 out')).toBeInTheDocument();
+    expect(screen.getByText('2 skipped')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Last run: 3 out, 2 skipped/i)).toBeInTheDocument();
+  });
+
+  it('omits the skipped badge when nothing was skipped', () => {
+    render(
+      <NodeCard
+        node={makeNode('success')}
+        isSelected={false}
+        onMeasure={vi.fn()}
+        onSelect={vi.fn()}
+        preview={preview({ skippedCount: 0 })}
+      />
+    );
+    expect(screen.getByText('3 out')).toBeInTheDocument();
+    expect(screen.queryByText(/skipped/i)).toBeNull();
+  });
+
+  it('falls back to port counts when no preview is present', () => {
+    render(<NodeCard node={makeNode('idle')} isSelected={false} onMeasure={vi.fn()} onSelect={vi.fn()} />);
+    // reddit.searchPosts is a source with one output port.
+    expect(screen.getByText('source')).toBeInTheDocument();
+    expect(screen.getByText('1 out')).toBeInTheDocument();
   });
 });

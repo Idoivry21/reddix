@@ -73,6 +73,52 @@ describe('ConsolePanel command trace', () => {
     expect(screen.getByText(/1 row/i)).toBeInTheDocument();
   });
 
+  it('captions an unsaved preview with the producing node and a not-saved notice', () => {
+    const state = baseState({
+      activeTab: 'Output Preview',
+      results: [{ platform: 'twitter', id: 't1', title: 'A tweet', author: 'puba', score: 0, created: '2026-06-07', url: null }],
+      resultsMeta: { sourceLabel: 'Tweet Detail', saved: false, totalItems: 15 }
+    });
+    render(<ConsolePanel state={state} onTabChange={vi.fn()} />);
+
+    expect(screen.getByText(/Tweet Detail/)).toBeInTheDocument();
+    expect(screen.getByText(/not saved/i)).toBeInTheDocument();
+    expect(screen.getByText(/15 items/i)).toBeInTheDocument();
+  });
+
+  it('captions a saved preview as exported', () => {
+    const state = baseState({
+      activeTab: 'Output Preview',
+      results: [{ platform: 'reddit', id: 'p1', title: 'Saved row', author: 'bob', score: 1, created: '2026-06-06', url: null }],
+      resultsMeta: { sourceLabel: 'Export JSON', saved: true, totalItems: 15 }
+    });
+    render(<ConsolePanel state={state} onTabChange={vi.fn()} />);
+
+    expect(screen.getByText(/exported/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not saved/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render javascript URLs from output preview rows as clickable links', () => {
+    const state = baseState({
+      activeTab: 'Output Preview',
+      results: [
+        {
+          platform: 'reddit',
+          id: 'p1',
+          title: 'Hostile link',
+          author: 'eve',
+          score: 1,
+          created: '2026-06-06',
+          url: 'javascript:alert(document.domain)'
+        }
+      ]
+    });
+    render(<ConsolePanel state={state} onTabChange={vi.fn()} />);
+
+    expect(screen.getByText('Hostile link')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /hostile link/i })).not.toBeInTheDocument();
+  });
+
   it('shows live step progress in the head while running', () => {
     render(
       <ConsolePanel state={baseState()} onTabChange={vi.fn()} runState="running" progress={{ done: 3, total: 7 }} />

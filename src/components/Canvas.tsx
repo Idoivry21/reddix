@@ -4,8 +4,15 @@ import { Icon } from '../icons';
 import { getBlockSpec } from '../shared/commandBuilders';
 import { canConnect } from '../shared/graph';
 import { accentForBlock, type AccentKey } from '../blockVisuals';
-import { CANVAS_GEOMETRY, edgePath, nodePorts, type PortPoint } from '../canvasGeometry';
-import type { CanvasView, NodeSize, WorkbenchEdge, WorkbenchNode } from '../flowTypes';
+import {
+  CANVAS_GEOMETRY,
+  DEFAULT_NODE_SIZE,
+  edgePath,
+  findSpliceTarget,
+  nodePorts,
+  type PortPoint
+} from '../canvasGeometry';
+import type { CanvasView, NodeIoPreview, NodeSize, WorkbenchEdge, WorkbenchNode } from '../flowTypes';
 import { BLOCK_DRAG_MIME } from '../dragMime';
 
 const MIN_ZOOM = 0.3;
@@ -22,7 +29,7 @@ const PORT_TARGET_SIZE = 22;
 // Pointer travel (Manhattan px) under which a pan gesture counts as a click.
 const PAN_CLICK_THRESHOLD_PX = 3;
 // Edge-delete glyph: circle radius and the half-extent of its X cross.
-const EDGE_DELETE_RADIUS = 9;
+const EDGE_DELETE_RADIUS = 11;
 const EDGE_DELETE_CROSS = 3.5;
 // Fallback accent when a node id is missing from the accent map.
 const DEFAULT_ACCENT: AccentKey = 'utility';
@@ -53,12 +60,16 @@ interface CanvasProps {
   onMoveNode: (id: string, x: number, y: number) => void;
   onConnect: (source: string, sourcePortId: string, target: string, targetPortId: string) => void;
   onDeleteEdge: (id: string) => void;
+  /** Splice the dragged node into the middle of an edge (source→node→target). */
+  onSpliceNode: (nodeId: string, edgeId: string) => void;
   onDropBlock: (blockType: string, x: number, y: number) => void;
   onPaneClick: () => void;
   onFit: () => void;
   onAddBlock: (blockType: string) => void;
   dragType: string | null;
   readOnly?: boolean;
+  /** Per-node I/O preview from the latest run, keyed by node id, for card badges. */
+  nodeIoPreview?: Record<string, NodeIoPreview>;
 }
 
 type DragState =
@@ -88,12 +99,14 @@ export function Canvas(props: CanvasProps) {
     onMoveNode,
     onConnect,
     onDeleteEdge,
+    onSpliceNode,
     onDropBlock,
     onPaneClick,
     onFit,
     onAddBlock,
     dragType,
-    readOnly = false
+    readOnly = false,
+    nodeIoPreview
   } = props;
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -103,6 +116,19 @@ export function Canvas(props: CanvasProps) {
   const [connecting, setConnecting] = useState(false);
   const [hoverPort, setHoverPort] = useState<{ node: string; port: string } | null>(null);
   const [hoverEdge, setHoverEdge] = useState<string | null>(null);
+  // Edge currently lit as a splice target during a node drag. The ref mirrors it
+  // so the pointer-up handler (a stale closure over state) reads the live value.
+  const [spliceTargetId, setSpliceTargetId] = useState<string | null>(null);
+  const spliceTargetRef = useRef<string | null>(null);
+
+  // Latest nodes/edges/sizes for the window pointer handlers, which subscribe once
+  // and would otherwise close over stale props on every node move.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+  const sizesRef = useRef(sizes);
+  sizesRef.current = sizes;
 
   const toCanvas = useCallback(
     (clientX: number, clientY: number): { x: number; y: number } => {
@@ -181,7 +207,22 @@ export function Canvas(props: CanvasProps) {
       } else if (state.mode === 'node') {
         const point = toCanvas(event.clientX, event.clientY);
         state.moved = true;
-        onMoveNode(state.id, Math.round(point.x - state.dx), Math.round(point.y - state.dy));
+        const nodeX = point.x - state.dx;
+        const nodeY = point.y - state.dy;
+        onMoveNode(state.id, Math.round(nodeX), Math.round(nodeY));
+        // Light up the nearest edge this node could splice into. Center is derived
+        // from the pointer (not the not-yet-rerendered node) so it tracks the drag.
+        const size = sizesRef.current[state.id];
+        const center = {
+          x: nodeX + (size?.w ?? DEFAULT_NODE_SIZE.w) / 2,
+          y: nodeY + (size?.h ?? DEFAULT_NODE_SIZE.h) / 2
+        };
+        const dragged = nodesRef.current.find((node) => node.id === state.id);
+        const targetId = dragged
+          ? findSpliceTarget(dragged, center, edgesRef.current, { nodes: nodesRef.current, sizes: sizesRef.current })
+          : null;
+        spliceTargetRef.current = targetId;
+        setSpliceTargetId(targetId);
       } else {
         const point = toCanvas(event.clientX, event.clientY);
         const element = document.elementFromPoint(event.clientX, event.clientY);
@@ -218,6 +259,12 @@ export function Canvas(props: CanvasProps) {
         commitWire(state.from, state.fromPort, event);
       } else if (state?.mode === 'pan' && !state.moved) {
         onPaneClick();
+      } else if (state?.mode === 'node' && spliceTargetRef.current) {
+        onSpliceNode(state.id, spliceTargetRef.current);
+      }
+      if (spliceTargetRef.current !== null) {
+        spliceTargetRef.current = null;
+        setSpliceTargetId(null);
       }
       drag.current = null;
     };
@@ -228,7 +275,7 @@ export function Canvas(props: CanvasProps) {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };
-  }, [onConnect, onMoveNode, onPaneClick, setView, toCanvas]);
+  }, [onConnect, onMoveNode, onPaneClick, onSpliceNode, setView, toCanvas]);
 
   // Native non-passive wheel listener so we can preventDefault (React binds
   // wheel passively). Scroll pans; Cmd/Ctrl-scroll zooms toward the cursor.
@@ -378,6 +425,7 @@ export function Canvas(props: CanvasProps) {
               const isActive = activeEdges.has(edge.id);
               const isSelected = selectedEdgeId === edge.id;
               const isHover = hoverEdge === edge.id;
+              const isSpliceTarget = spliceTargetId === edge.id;
               const mid = { x: (sourcePoint.x + targetPoint.x) / 2, y: (sourcePoint.y + targetPoint.y) / 2 };
               const srcAccent = accentById[edge.source] ?? DEFAULT_ACCENT;
               const tgtAccent = accentById[edge.target] ?? DEFAULT_ACCENT;
@@ -388,7 +436,7 @@ export function Canvas(props: CanvasProps) {
                   <path
                     className={`edge flow ${isActive ? 'active edge-dash' : ''} ${isSelected ? 'selected' : ''} ${
                       isHover ? 'hover' : ''
-                    }`}
+                    } ${isSpliceTarget ? 'splice-target' : ''}`}
                     d={d}
                     stroke={stroke}
                   />
@@ -451,6 +499,7 @@ export function Canvas(props: CanvasProps) {
             isSelected={selectedNodeId === node.id}
             onMeasure={onMeasure}
             onSelect={onSelectNode}
+            preview={nodeIoPreview?.[node.id]}
           />
         ))}
 

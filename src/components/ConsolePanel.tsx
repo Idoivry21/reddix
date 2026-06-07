@@ -3,6 +3,8 @@ import type { ConsoleRunStep, ConsoleState } from '../api';
 import type { RunStatusKind } from '../flowTypes';
 import { Icon } from '../icons';
 import { MAX_SAMPLE_ROWS } from '../shared/runLimits';
+import type { RunSampleMeta } from '../shared/types';
+import { safeHref } from '../shared/urlSafety';
 import { Tabs, tabId, tabPanelId } from './Tabs';
 
 interface ConsolePanelProps {
@@ -133,7 +135,7 @@ export function ConsolePanel({
           tabIndex={0}
         >
           {state.activeTab === 'Output Preview' ? (
-            <ResultTable rows={state.results} />
+            <ResultTable rows={state.results} meta={state.resultsMeta} />
           ) : state.activeTab === 'Logs' ? (
             <LogList logs={state.logs} />
           ) : state.activeTab === 'History' ? (
@@ -223,19 +225,40 @@ function HistoryList({ entries }: { entries: ConsoleState['history'] }) {
   );
 }
 
-function ResultTable({ rows }: { rows: Array<Record<string, string | number | null>> }) {
+interface ResultTableProps {
+  rows: Array<Record<string, string | number | null>>;
+  meta?: RunSampleMeta;
+}
+
+function ResultTable({ rows, meta }: ResultTableProps) {
   if (rows.length === 0) {
     return (
       <div className="out-empty">
-        No rows yet — press <strong>Run flow</strong>; exported items appear here.
+        No rows yet — press <strong>Run flow</strong> to execute.
       </div>
     );
   }
-  const capped = rows.length >= MAX_SAMPLE_ROWS;
+  const total = meta?.totalItems ?? rows.length;
+  const capped = rows.length >= MAX_SAMPLE_ROWS && total > rows.length;
   return (
     <div className="out-table-wrap">
       <div className="out-caption">
-        {rows.length} row{rows.length === 1 ? '' : 's'}
+        {meta ? (
+          meta.saved ? (
+            <>
+              Exported · {total} item{total === 1 ? '' : 's'}
+            </>
+          ) : (
+            <>
+              Preview · {meta.sourceLabel} · {total} item{total === 1 ? '' : 's'} — not saved. Add an Export
+              block to save.
+            </>
+          )
+        ) : (
+          <>
+            {rows.length} row{rows.length === 1 ? '' : 's'}
+          </>
+        )}
         {capped ? ` · showing first ${MAX_SAMPLE_ROWS}` : ''}
       </div>
       <table className="out-table">
@@ -250,7 +273,7 @@ function ResultTable({ rows }: { rows: Array<Record<string, string | number | nu
         </thead>
         <tbody>
           {rows.map((row, index) => {
-            const url = typeof row.url === 'string' ? row.url : null;
+            const url = safeHref(row.url);
             return (
               <tr key={`${index}-${row.platform}-${row.id ?? row.title}`}>
                 <td>{row.platform}</td>

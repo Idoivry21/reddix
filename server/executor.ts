@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { AUTH_ENV_KEYS } from '../src/shared/redaction';
 import type { BuiltCommand } from '../src/shared/types';
 import { createCappedBuffer } from './cappedBuffer';
@@ -14,6 +15,8 @@ const SPAWN_ERROR_EXIT_CODE = 127; // conventional "command not found" / spawn f
 // A `--help` health probe should be small and fast — bound it tighter than a real run.
 const HEALTH_CHECK_MAX_OUTPUT_BYTES = 64 * 1024;
 const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+const USE_PROCESS_GROUPS = process.platform !== 'win32';
+const activeCliChildren = new Set<ChildProcess>();
 
 /**
  * Builds a least-privilege environment for a spawned CLI: only the variables
@@ -55,12 +58,25 @@ export function spawnCapped(
   options: SpawnCappedOptions
 ): Promise<ExecutorResult> {
   return new Promise<ExecutorResult>((resolve) => {
-    const child = spawn(executable, argv, { shell: false, env: options.env });
+    const child = spawn(executable, argv, { shell: false, env: options.env, detached: USE_PROCESS_GROUPS });
+    activeCliChildren.add(child);
     const stdout = createCappedBuffer(options.maxOutputBytes);
     const stderr = createCappedBuffer(options.maxOutputBytes);
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let settled = false;
     let timedOut = false;
+    let decodersFlushed = false;
+
+    const flushDecoders = (): void => {
+      if (decodersFlushed) {
+        return;
+      }
+      decodersFlushed = true;
+      stdout.append(stdoutDecoder.end());
+      stderr.append(stderrDecoder.end());
+    };
 
     const finalize = (exitCode: number): void => {
       if (settled) {
@@ -68,6 +84,7 @@ export function spawnCapped(
       }
       settled = true;
       clearTimeout(timeout);
+      flushDecoders();
       if (stdout.truncated || stderr.truncated) {
         const reason = `[reddix] output exceeded ${options.maxOutputBytes} bytes; process terminated`;
         const combinedStderr = stderr.value ? `${stderr.value}\n${reason}` : reason;
@@ -85,7 +102,7 @@ export function spawnCapped(
 
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killProcessTree(child, 'SIGKILL');
       finalize(TIMEOUT_EXIT_CODE);
     }, timeoutMs);
     if (typeof timeout.unref === 'function') {
@@ -94,30 +111,55 @@ export function spawnCapped(
 
     const killIfOver = (): void => {
       if (stdout.truncated || stderr.truncated) {
-        child.kill('SIGKILL');
+        killProcessTree(child, 'SIGKILL');
       }
     };
 
     child.stdout.on('data', (chunk) => {
-      stdout.append(chunk.toString());
+      stdout.append(stdoutDecoder.write(chunk));
       killIfOver();
     });
     child.stderr.on('data', (chunk) => {
-      stderr.append(chunk.toString());
+      stderr.append(stderrDecoder.write(chunk));
       killIfOver();
     });
     child.on('error', (error) => {
+      activeCliChildren.delete(child);
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timeout);
+      flushDecoders();
       resolve({ stdout: stdout.value, stderr: error.message, exitCode: SPAWN_ERROR_EXIT_CODE });
     });
     child.on('close', (code) => {
+      activeCliChildren.delete(child);
       finalize(code ?? 1);
     });
   });
+}
+
+export function killAllCliChildren(signal: NodeJS.Signals = 'SIGTERM'): number {
+  const children = [...activeCliChildren];
+  for (const child of children) {
+    killProcessTree(child, signal);
+  }
+  return children.length;
+}
+
+function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (USE_PROCESS_GROUPS && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+        return;
+      }
+    }
+  }
+  child.kill(signal);
 }
 
 interface CliExecutorDeps {

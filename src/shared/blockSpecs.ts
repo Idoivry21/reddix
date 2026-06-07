@@ -6,13 +6,15 @@ const MIN_FETCH_LIMIT = 1;
 const MAX_FETCH_LIMIT = 1000;
 
 const socialArrayPort = { id: 'items', label: 'Items', type: 'SocialItem[]' as const };
-const detailPort = { id: 'detail', label: 'Detail', type: 'DetailObject' as const };
 const artifactPort = { id: 'artifact', label: 'Artifact', type: 'FileArtifact' as const };
 const redditSortOptions = options(['hot', 'new', 'top', 'rising', 'controversial']);
 const redditSearchSortOptions = options(['relevance', 'hot', 'top', 'new', 'comments']);
 const redditTimeRangeOptions = options(['hour', 'day', 'week', 'month', 'year', 'all']);
 const twitterSearchTabOptions = options(['latest', 'top', 'media']);
 const twitterTimelineOptions = options(['following', 'for-you']);
+const QUERY_MAX_LENGTH = 4096;
+const SHORT_TEXT_MAX_LENGTH = 256;
+const EXPORT_PATH_MAX_LENGTH = 512;
 
 export const blockSpecs: BlockSpec[] = [
   {
@@ -25,8 +27,8 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     executable: 'rdt',
     fields: [
-      { key: 'query', label: 'Query', type: 'text', required: true },
-      { key: 'subreddit', label: 'Subreddit', type: 'text' },
+      { key: 'query', label: 'Query', type: 'text', required: true, maxLength: QUERY_MAX_LENGTH },
+      { key: 'subreddit', label: 'Subreddit', type: 'text', maxLength: SHORT_TEXT_MAX_LENGTH },
       {
         key: 'sort',
         label: 'Sort',
@@ -59,7 +61,7 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     executable: 'rdt',
     fields: [
-      { key: 'subreddit', label: 'Subreddit', type: 'text', required: true },
+      { key: 'subreddit', label: 'Subreddit', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH },
       { key: 'sort', label: 'Sort', type: 'select', options: redditSortOptions },
       { key: 'timeRange', label: 'Time Range', type: 'select', options: redditTimeRangeOptions },
       { key: 'limit', label: 'Limit', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT }
@@ -88,10 +90,10 @@ export const blockSpecs: BlockSpec[] = [
     category: 'Enrichment',
     priority: 'P1',
     description: 'Read a Reddit post by stable ID.',
-    ports: { input: [socialArrayPort], output: [detailPort] },
+    ports: { input: [socialArrayPort], output: [socialArrayPort] },
     executable: 'rdt',
     fields: [
-      { key: 'postId', label: 'Post ID', type: 'text', required: true },
+      { key: 'postId', label: 'Post ID', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH },
       { key: 'expandMore', label: 'Expand More', type: 'boolean' }
     ],
     defaultSettings: { postId: '', expandMore: false }
@@ -106,12 +108,12 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     executable: 'twitter',
     fields: [
-      { key: 'query', label: 'Query', type: 'text', required: true },
+      { key: 'query', label: 'Query', type: 'text', required: true, maxLength: QUERY_MAX_LENGTH },
       { key: 'tab', label: 'Tab', type: 'select', options: twitterSearchTabOptions },
       { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
-      { key: 'language', label: 'Language', type: 'text' },
-      { key: 'fromUser', label: 'From User', type: 'text' },
-      { key: 'since', label: 'Since', type: 'text' },
+      { key: 'language', label: 'Language', type: 'text', maxLength: 16, pattern: /^[A-Za-z-]+$/ },
+      { key: 'fromUser', label: 'From User', type: 'text', maxLength: SHORT_TEXT_MAX_LENGTH },
+      { key: 'since', label: 'Since', type: 'text', maxLength: 10, pattern: /^\d{4}-\d{2}-\d{2}$/ },
       { key: 'excludeRetweets', label: 'Exclude Retweets', type: 'boolean' },
       { key: 'hasLinks', label: 'Has Links', type: 'boolean' },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
@@ -169,7 +171,7 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     executable: 'twitter',
     fields: [
-      { key: 'handle', label: 'Handle', type: 'text', required: true },
+      { key: 'handle', label: 'Handle', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH },
       { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
@@ -185,7 +187,7 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [], output: [socialArrayPort] },
     executable: 'twitter',
     fields: [
-      { key: 'listId', label: 'List ID', type: 'text', required: true },
+      { key: 'listId', label: 'List ID', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
     defaultSettings: { listId: '', fullText: true }
@@ -197,10 +199,10 @@ export const blockSpecs: BlockSpec[] = [
     category: 'Enrichment',
     priority: 'P1',
     description: 'Read a single tweet by ID or URL.',
-    ports: { input: [socialArrayPort], output: [detailPort] },
+    ports: { input: [socialArrayPort], output: [socialArrayPort] },
     executable: 'twitter',
     fields: [
-      { key: 'tweetIdOrUrl', label: 'Tweet ID or URL', type: 'text', required: true },
+      { key: 'tweetIdOrUrl', label: 'Tweet ID or URL', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH, format: 'twitter-id-or-url' },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
     defaultSettings: { tweetIdOrUrl: '', fullText: true }
@@ -212,9 +214,9 @@ export const blockSpecs: BlockSpec[] = [
     category: 'Enrichment',
     priority: 'P1',
     description: 'Read X/Twitter user metadata.',
-    ports: { input: [socialArrayPort], output: [detailPort] },
+    ports: { input: [socialArrayPort], output: [socialArrayPort] },
     executable: 'twitter',
-    fields: [{ key: 'handle', label: 'Handle', type: 'text', required: true }],
+    fields: [{ key: 'handle', label: 'Handle', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH }],
     defaultSettings: { handle: '' }
   },
   {
@@ -224,10 +226,10 @@ export const blockSpecs: BlockSpec[] = [
     category: 'Enrichment',
     priority: 'P1',
     description: 'Read an X/Twitter article by ID or URL.',
-    ports: { input: [socialArrayPort], output: [detailPort] },
+    ports: { input: [socialArrayPort], output: [socialArrayPort] },
     executable: 'twitter',
     fields: [
-      { key: 'articleIdOrUrl', label: 'Article ID or URL', type: 'text', required: true },
+      { key: 'articleIdOrUrl', label: 'Article ID or URL', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH, format: 'twitter-id-or-url' },
       { key: 'format', label: 'Format', type: 'select', options: options(['json', 'markdown']) }
     ],
     defaultSettings: { articleIdOrUrl: '', format: 'json' }
@@ -252,8 +254,8 @@ export const blockSpecs: BlockSpec[] = [
     description: 'Include or exclude text across normalized fields.',
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
     fields: [
-      { key: 'include', label: 'Include', type: 'text' },
-      { key: 'exclude', label: 'Exclude', type: 'text' }
+      { key: 'include', label: 'Include', type: 'text', maxLength: QUERY_MAX_LENGTH },
+      { key: 'exclude', label: 'Exclude', type: 'text', maxLength: QUERY_MAX_LENGTH }
     ],
     defaultSettings: { include: 'cli automation', exclude: '' }
   },
@@ -331,7 +333,7 @@ export const blockSpecs: BlockSpec[] = [
     description: 'Write normalized results to JSON.',
     ports: { input: [socialArrayPort], output: [artifactPort] },
     fields: [
-      { key: 'path', label: 'Path', type: 'path', required: true },
+      { key: 'path', label: 'Path', type: 'path', required: true, maxLength: EXPORT_PATH_MAX_LENGTH, extensions: ['.json'] },
       { key: 'pretty', label: 'Pretty Print', type: 'boolean' }
     ],
     defaultSettings: { path: 'outputs/research.json', pretty: true }
@@ -344,7 +346,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P0',
     description: 'Write normalized results to CSV.',
     ports: { input: [socialArrayPort], output: [artifactPort] },
-    fields: [{ key: 'path', label: 'Path', type: 'path', required: true }],
+    fields: [{ key: 'path', label: 'Path', type: 'path', required: true, maxLength: EXPORT_PATH_MAX_LENGTH, extensions: ['.csv'] }],
     defaultSettings: { path: 'outputs/research.csv' }
   },
   {
@@ -355,7 +357,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Write a research digest grouped by platform.',
     ports: { input: [socialArrayPort], output: [artifactPort] },
-    fields: [{ key: 'path', label: 'Path', type: 'path', required: true }],
+    fields: [{ key: 'path', label: 'Path', type: 'path', required: true, maxLength: EXPORT_PATH_MAX_LENGTH, extensions: ['.md'] }],
     defaultSettings: { path: 'outputs/research.md' }
   },
   {
@@ -366,7 +368,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Write a styled, self-contained HTML report of results.',
     ports: { input: [socialArrayPort], output: [artifactPort] },
-    fields: [{ key: 'path', label: 'Path', type: 'path', required: true }],
+    fields: [{ key: 'path', label: 'Path', type: 'path', required: true, maxLength: EXPORT_PATH_MAX_LENGTH, extensions: ['.html'] }],
     defaultSettings: { path: 'outputs/report.html' }
   },
   {
@@ -377,7 +379,7 @@ export const blockSpecs: BlockSpec[] = [
     priority: 'P1',
     description: 'Canvas-only annotation.',
     ports: { input: [], output: [{ id: 'any', label: 'Any', type: 'Any' }] },
-    fields: [{ key: 'text', label: 'Text', type: 'text' }],
+    fields: [{ key: 'text', label: 'Text', type: 'text', maxLength: QUERY_MAX_LENGTH }],
     defaultSettings: { text: 'Research note' }
   }
 ];

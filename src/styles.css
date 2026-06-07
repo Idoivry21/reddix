@@ -705,6 +705,15 @@ textarea:focus-visible,
   stroke-width: 2.6;
   opacity: 1;
 }
+/* Edge lit as the drop target while dragging a node onto it to splice in. The
+   CSS stroke overrides the per-edge gradient set as a presentation attribute. */
+.edge.splice-target {
+  stroke: var(--brand-500);
+  stroke-width: 3.5;
+  opacity: 1;
+  stroke-dasharray: 7 5;
+  animation: dash 0.6s linear infinite;
+}
 .edge-dash {
   stroke-dasharray: 5 7;
   animation: dash 0.6s linear infinite;
@@ -725,6 +734,9 @@ textarea:focus-visible,
 }
 .edge-del {
   cursor: pointer;
+  /* Re-enable hit-testing: .edges-svg sets pointer-events:none and only <path>
+     children opt back in, so the glyph's circle/lines need this to catch clicks. */
+  pointer-events: auto;
 }
 .edge-del circle {
   fill: var(--surface-3);
@@ -961,6 +973,39 @@ textarea:focus-visible,
 .node-foot .out-count {
   color: var(--accent);
   font-weight: 500;
+}
+/* ---- per-node I/O badges (after a run) ---- */
+.node-io {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.io-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 10px;
+  line-height: 1.5;
+  border: 1px solid var(--line-faint);
+}
+.io-badge.io-out {
+  color: var(--ink-200);
+  background: color-mix(in srgb, var(--ink-400) 12%, transparent);
+}
+.io-badge.io-out.status-success {
+  color: var(--ok, #15803d);
+  border-color: color-mix(in srgb, var(--ok, #15803d) 35%, var(--line-faint));
+  background: color-mix(in srgb, var(--ok, #15803d) 12%, transparent);
+}
+.io-badge.io-out.status-error {
+  color: var(--bad, #b91c1c);
+  border-color: color-mix(in srgb, var(--bad, #b91c1c) 35%, var(--line-faint));
+  background: color-mix(in srgb, var(--bad, #b91c1c) 12%, transparent);
+}
+.io-badge.io-skip {
+  color: var(--warn, #b45309);
+  border-color: color-mix(in srgb, var(--warn, #b45309) 35%, var(--line-faint));
+  background: color-mix(in srgb, var(--warn, #b45309) 12%, transparent);
 }
 
 /* ---- ports ---- */
@@ -1246,6 +1291,122 @@ textarea:focus-visible,
   margin: 8px 0 0;
   color: var(--term-dim);
   font-size: 10.5px;
+}
+
+/* ---- run this block / binding mapper / last run ---- */
+.run-node,
+.bind-mapper,
+.last-run {
+  margin-top: 16px;
+}
+.run-node .cmd-label,
+.bind-mapper .cmd-label,
+.last-run .cmd-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-400);
+  margin-bottom: 8px;
+}
+.run-node-btn {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.bind-rows {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.bind-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-300);
+}
+.bind-row .bind-target {
+  font-weight: 600;
+  color: var(--ink-200);
+}
+.bind-row .bind-arrow {
+  color: var(--ink-400);
+}
+.bind-row code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.bind-policy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bind-policy-label {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+.lr-counts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin-bottom: 9px;
+}
+.lr-count {
+  font-weight: 600;
+  color: var(--ink-200);
+}
+.lr-count.lr-skip {
+  color: var(--warn, #b45309);
+}
+.lr-arrow {
+  color: var(--ink-400);
+}
+.lr-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.lr-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-faint);
+  color: var(--ink-300);
+}
+.lr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.lr-table th,
+.lr-table td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+.lr-table th {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-400);
 }
 .field-actions {
   margin-top: 22px;

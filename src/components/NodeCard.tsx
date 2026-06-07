@@ -3,13 +3,15 @@ import { getBlockSpec } from '../shared/commandBuilders';
 import { accentForBlock, eyebrowForAccent, iconForBlock, summaryForBlock } from '../blockVisuals';
 import { Icon } from '../icons';
 import { portFrac } from '../canvasGeometry';
-import type { NodeStatus, WorkbenchNode } from '../flowTypes';
+import type { NodeIoPreview, NodeStatus, WorkbenchNode } from '../flowTypes';
 
 interface NodeCardProps {
   node: WorkbenchNode;
   isSelected: boolean;
   onMeasure: (id: string, w: number, h: number) => void;
   onSelect: (id: string) => void;
+  /** Per-node I/O from the latest run; when present the foot shows count badges. */
+  preview?: NodeIoPreview;
 }
 
 const STATUS_LABEL: Record<NodeStatus, string> = {
@@ -20,7 +22,7 @@ const STATUS_LABEL: Record<NodeStatus, string> = {
   error: 'Error'
 };
 
-export function NodeCard({ node, isSelected, onMeasure, onSelect }: NodeCardProps) {
+export function NodeCard({ node, isSelected, onMeasure, onSelect, preview }: NodeCardProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const spec = getBlockSpec(node.blockType);
   const accent = accentForBlock(spec.provider, spec.category);
@@ -128,7 +130,19 @@ export function NodeCard({ node, isSelected, onMeasure, onSelect }: NodeCardProp
 
       <div className="node-foot">
         <span>{isSource ? 'source' : `${inN} in`}</span>
-        <span className="out-count">{isSink ? 'sink' : `${outN} out`}</span>
+        {preview ? (
+          <span
+            className="node-io"
+            aria-label={`Last run: ${preview.outputCount} out${
+              preview.skippedCount > 0 ? `, ${preview.skippedCount} skipped` : ''
+            }`}
+          >
+            <span className={`io-badge io-out status-${preview.status}`}>{preview.outputCount} out</span>
+            {preview.skippedCount > 0 ? <span className="io-badge io-skip">{preview.skippedCount} skipped</span> : null}
+          </span>
+        ) : (
+          <span className="out-count">{isSink ? 'sink' : `${outN} out`}</span>
+        )}
       </div>
     </div>
   );

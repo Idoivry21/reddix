@@ -45,7 +45,21 @@ describe('exporters', () => {
 
   it('serializes Markdown grouped by platform', () => {
     expect(serializeMarkdown([item])).toContain('## Reddit');
-    expect(serializeMarkdown([item])).toContain('[CLI tools](https://reddit.com/r/localdev/comments/abc/test)');
+    expect(serializeMarkdown([item])).toContain('[CLI tools](<https://reddit.com/r/localdev/comments/abc/test>)');
+  });
+
+  it('drops dangerous Markdown links and escapes link labels', () => {
+    const markdown = serializeMarkdown([
+      {
+        ...item,
+        url: 'javascript:fetch("//evil.example")',
+        title: 'break ](https://evil.example) [label]'
+      }
+    ]);
+
+    expect(markdown).not.toContain('javascript:');
+    expect(markdown).not.toContain('https://evil.example)');
+    expect(markdown).toContain('break \\]\\(https://evil.example\\) \\[label\\]');
   });
 
   it('builds timestamped export paths to avoid overwrites', () => {

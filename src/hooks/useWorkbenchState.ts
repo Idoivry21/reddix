@@ -6,14 +6,17 @@ import {
   listFlows,
   listRuns,
   postRun,
+  postRunNode,
   saveFlow,
   subscribeRunEvents,
   type ConsoleHistoryEntry,
-  type ConsoleState
+  type ConsoleState,
+  type RunNodeMode
 } from '../api';
 import {
   DEFAULT_FLOW_ID,
   type CanvasView,
+  type NodeIoPreview,
   type NodeSize,
   type NodeStatus,
   type RunStatus,
@@ -25,7 +28,7 @@ import { toFlowModel, toFlowRequestBody } from '../flowSerialization';
 import { byStartedAtDesc, capLogs, MAX_HISTORY_ENTRIES, runRecordToConsoleState, runsToHistoryEntries, toConsoleStep } from '../runConsole';
 import { createSampleEdges, createSampleNodes, SAMPLE_FLOW_NAME } from '../sampleFlow';
 import { cronToIntervalMs } from '../scheduleCadence';
-import { CANVAS_GEOMETRY, DEFAULT_NODE_SIZE } from '../canvasGeometry';
+import { CANVAS_GEOMETRY, DEFAULT_NODE_SIZE, resolveSplicePorts } from '../canvasGeometry';
 import type { SavedSchedule } from '../components/ScheduleModal';
 import type { FlowSummary } from '../components/Dashboard';
 import { accentForBlock, type AccentKey } from '../blockVisuals';
@@ -62,6 +65,14 @@ export function useWorkbenchState() {
   const [consoleHeight, setConsoleHeight] = useState(208);
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
 
+  // Per-node I/O preview for the card badges + Inspector panel, keyed by node id.
+  // Updated (merged) as runs complete so a single-node run refreshes only its node
+  // while the rest keep their last result.
+  const [nodeIoPreview, setNodeIoPreview] = useState<Record<string, NodeIoPreview>>({});
+  // The last FULL-flow run — the source of cached upstream samples for a
+  // cached-upstream single-node run. Single-node runs never update it.
+  const [lastFullRun, setLastFullRun] = useState<RunRecord | null>(null);
+
   const [activeFlowId, setActiveFlowId] = useState(DEFAULT_FLOW_ID);
   const [schedule, setSchedule] = useState<{ enabled: boolean; cron: string }>({ enabled: false, cron: '0 9 * * 1' });
   const [showSchedule, setShowSchedule] = useState(false);
@@ -79,6 +90,28 @@ export function useWorkbenchState() {
   activeFlowIdRef.current = activeFlowId;
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId), [nodes, selectedNodeId]);
+
+  // Node ids whose last full run produced cached output — the candidates a
+  // cached-upstream single-node run can feed from.
+  const cachedOutputNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const step of lastFullRun?.steps ?? []) {
+      if ((step.io?.outputCount ?? 0) > 0) {
+        ids.add(step.blockId);
+      }
+    }
+    return ids;
+  }, [lastFullRun]);
+
+  const hasUpstream = useCallback(
+    (nodeId: string) => edges.some((edge) => edge.target === nodeId),
+    [edges]
+  );
+
+  const hasCachedUpstream = useCallback(
+    (nodeId: string) => edges.some((edge) => edge.target === nodeId && cachedOutputNodeIds.has(edge.source)),
+    [edges, cachedOutputNodeIds]
+  );
 
   const onMeasure = useCallback((id: string, w: number, h: number) => {
     setSizes((current) => (current[id]?.w === w && current[id]?.h === h ? current : { ...current, [id]: { w, h } }));
@@ -195,6 +228,70 @@ export function useWorkbenchState() {
     setSelectedEdgeId((current) => (current === edgeId ? null : current));
   }, []);
 
+  // Drop a node into the middle of an edge: remove source→target and rewire as
+  // source→node→target, reusing each block's compatible ports. No-op (with a
+  // toast) when the node can't bridge the two — the canvas only offers a splice
+  // for valid pairs, so this is the defensive backstop.
+  const spliceNodeIntoEdge = useCallback(
+    (nodeId: string, edgeId: string) => {
+      const edge = edges.find((item) => item.id === edgeId);
+      if (!edge || nodeId === edge.source || nodeId === edge.target) {
+        return;
+      }
+      const sourceNode = nodes.find((node) => node.id === edge.source);
+      const targetNode = nodes.find((node) => node.id === edge.target);
+      const draggedNode = nodes.find((node) => node.id === nodeId);
+      if (!sourceNode || !targetNode || !draggedNode) {
+        return;
+      }
+      const ports = resolveSplicePorts({
+        sourceBlockType: sourceNode.blockType,
+        sourcePortId: edge.sourcePortId,
+        nodeBlockType: draggedNode.blockType,
+        targetBlockType: targetNode.blockType,
+        targetPortId: edge.targetPortId
+      });
+      if (!ports) {
+        pushToast(`${draggedNode.label} can't splice into this connection`, 'error');
+        return;
+      }
+      const stamp = Date.now();
+      const additions: WorkbenchEdge[] = [
+        {
+          id: `e-${edge.source}-${nodeId}-${ports.inPortId}-${stamp}`,
+          source: edge.source,
+          sourcePortId: edge.sourcePortId,
+          target: nodeId,
+          targetPortId: ports.inPortId
+        },
+        {
+          id: `e-${nodeId}-${edge.target}-${edge.targetPortId}-${stamp}`,
+          source: nodeId,
+          sourcePortId: ports.outPortId,
+          target: edge.target,
+          targetPortId: edge.targetPortId
+        }
+      ];
+      setEdges((current) => {
+        const next = current.filter((item) => item.id !== edgeId);
+        // Mirror connect's dedup: skip an addition whose source/target/targetPortId
+        // already exists so a pre-existing node edge is preserved, not duplicated.
+        const fresh = additions.filter(
+          (addition) =>
+            !next.some(
+              (item) =>
+                item.source === addition.source &&
+                item.target === addition.target &&
+                item.targetPortId === addition.targetPortId
+            )
+        );
+        return [...next, ...fresh];
+      });
+      setValidationMessage('Ready to run');
+    },
+    [edges, nodes, pushToast]
+  );
+
   // ----- viewport fit -----
   const fitView = useCallback(() => {
     if (nodes.length === 0) {
@@ -253,6 +350,7 @@ export function useWorkbenchState() {
         const consoleStep = toConsoleStep(step, nodeTypeByIdRef.current[step.blockId]);
         setConsoleState((current) => ({ ...current, steps: upsertStep(current.steps, consoleStep) }));
         setNodeStatus(step.blockId, nodeStatusFromStep(step.status));
+        setNodeIoPreview((current) => mergeNodeIo(current, [step]));
       },
       onComplete: ({ run }) => {
         // Only reflect the run the user is actively watching for the open flow.
@@ -260,10 +358,31 @@ export function useWorkbenchState() {
           return;
         }
         setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeByIdRef.current));
-        setNodes((current) => applyRunStatuses(current, run));
+        if (run.trigger) {
+          // Single-node run: refresh only its node; never touch lastFullRun.
+          setNodeIoPreview((current) => mergeNodeIo(current, run.steps));
+          setNodes((current) => applyStepStatuses(current, run.steps));
+        } else {
+          setNodeIoPreview(mergeNodeIo({}, run.steps));
+          setLastFullRun(run);
+          setNodes((current) => applyRunStatuses(current, run));
+        }
+      },
+      onError: (error) => {
+        if (!isRunningRef.current) {
+          return;
+        }
+        const message =
+          error?.phase === 'parse'
+            ? 'Live updates received an unreadable event'
+            : error?.readyState === 2
+              ? 'Live updates disconnected'
+              : 'Live updates interrupted; reconnecting...';
+        setConsoleState((current) => ({ ...current, activeTab: 'Logs', logs: capLogs([message, ...current.logs]) }));
+        pushToast(message, 'warning');
       }
     });
-  }, [setNodeStatus]);
+  }, [pushToast, setNodeStatus]);
 
   // ----- run history (persisted, loaded on open) -----
   const loadHistory = useCallback(
@@ -323,6 +442,8 @@ export function useWorkbenchState() {
     setRunStatus({ kind: 'running', message: 'Run started' });
     setConsoleState((current) => ({ ...current, activeTab: 'Logs', logs: ['Run started…'] }));
     setNodes((current) => current.map((node) => ({ ...node, status: 'pending' })));
+    // Clear stale per-node badges; they repopulate from this run's results.
+    setNodeIoPreview({});
 
     try {
       const scheduleModel: PersistedFlow['schedule'] = {
@@ -337,6 +458,8 @@ export function useWorkbenchState() {
       }
       setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeByIdRef.current));
       setNodes((current) => applyRunStatuses(current, run));
+      setNodeIoPreview(mergeNodeIo({}, run.steps));
+      setLastFullRun(run);
       const summary = summarizeRun(run);
       setValidationMessage(summary.validationMessage);
       setRunStatus(summary.runStatus);
@@ -357,6 +480,72 @@ export function useWorkbenchState() {
       }
     }
   }, [activeFlowId, edges, flowName, nodes, schedule, pushToast]);
+
+  // ----- run a single node in isolation -----
+  const runNode = useCallback(
+    async (nodeId: string, mode: RunNodeMode) => {
+      const target = nodes.find((node) => node.id === nodeId);
+      if (!target) {
+        return;
+      }
+      // Validate the whole flow but only block on errors attributable to this node.
+      const validation = validateFlow(toFlowModel(nodes, edges));
+      const nodeError = validation.errors.find((error) => error.nodeId === nodeId);
+      if (nodeError) {
+        setRunStatus({ kind: 'error', message: `Run node blocked: ${nodeError.message}` });
+        pushToast(`Run node blocked: ${nodeError.message}`, 'error');
+        return;
+      }
+
+      const token = ++runToken.current;
+      isRunningRef.current = true;
+      setIsRunning(true);
+      setConsoleCollapsed(false);
+      setRunStatus({ kind: 'running', message: `Running ${target.label}…` });
+      setNodeStatus(nodeId, 'running');
+
+      try {
+        const scheduleModel: PersistedFlow['schedule'] = {
+          enabled: schedule.enabled,
+          intervalMs: schedule.enabled ? cronToIntervalMs(schedule.cron) : undefined
+        };
+        const body = toFlowRequestBody(nodes, edges, { flowId: activeFlowId, name: flowName, failFast: false }, scheduleModel);
+        await saveFlow(activeFlowId, body);
+        const run = await postRunNode(activeFlowId, nodeId, mode);
+        if (runToken.current !== token) {
+          return;
+        }
+        setConsoleState((current) => runRecordToConsoleState(run, current, nodeTypeByIdRef.current));
+        setNodeIoPreview((current) => mergeNodeIo(current, run.steps));
+        // Update only the stepped node's status; leave the rest of the canvas alone.
+        setNodes((current) => applyStepStatuses(current, run.steps));
+        const ok = run.status !== 'failed';
+        const outCount = run.steps[0]?.io?.outputCount ?? 0;
+        setRunStatus(
+          ok
+            ? { kind: 'success', message: `${target.label} ran` }
+            : { kind: 'error', message: `${target.label} failed` }
+        );
+        pushToast(
+          ok ? `${target.label}: ${outCount} item${outCount === 1 ? '' : 's'} out` : `${target.label} failed: ${run.error ?? 'error'}`,
+          ok ? 'success' : 'error'
+        );
+      } catch (error) {
+        if (runToken.current !== token) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'Unexpected run error';
+        setRunStatus({ kind: 'error', message: `Run node failed: ${message}` });
+        pushToast(`Run node failed: ${message}`, 'error');
+      } finally {
+        if (runToken.current === token) {
+          isRunningRef.current = false;
+          setIsRunning(false);
+        }
+      }
+    },
+    [activeFlowId, edges, flowName, nodes, schedule, pushToast, setNodeStatus]
+  );
 
   const stopRun = useCallback(() => {
     runToken.current += 1;
@@ -446,6 +635,8 @@ export function useWorkbenchState() {
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
         setConsoleState(emptyConsoleState());
+        setNodeIoPreview({});
+        setLastFullRun(null);
         setShowDashboard(false);
         loadHistory(flow.id);
         window.setTimeout(fitView, CANVAS_GEOMETRY.fitDelayMs.openFlow);
@@ -468,6 +659,8 @@ export function useWorkbenchState() {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setConsoleState(emptyConsoleState());
+    setNodeIoPreview({});
+    setLastFullRun(null);
     setShowDashboard(false);
   }, []);
 
@@ -496,6 +689,7 @@ export function useWorkbenchState() {
     duplicateNode,
     connect,
     deleteEdge,
+    spliceNodeIntoEdge,
     dragType,
     setDragType,
     isRunning,
@@ -510,6 +704,10 @@ export function useWorkbenchState() {
     setConsoleCollapsed,
     clearConsole,
     runNow,
+    runNode,
+    nodeIoPreview,
+    hasUpstream,
+    hasCachedUpstream,
     stopRun,
     schedule,
     showSchedule,
@@ -661,6 +859,41 @@ function applyRunStatuses(
     const next = byId.get(node.id) ?? 'idle';
     return node.status === next ? node : { ...node, status: next };
   });
+}
+
+/**
+ * Apply statuses only for nodes present in `steps`, leaving every other node
+ * untouched. Used by single-node runs so running one node does not reset the
+ * rest of the canvas to idle (unlike {@link applyRunStatuses}).
+ */
+function applyStepStatuses(nodes: WorkbenchNode[], steps: RunRecord['steps']): WorkbenchNode[] {
+  const byId = new Map(steps.map((step) => [step.blockId, nodeStatusFromStep(step.status)]));
+  return nodes.map((node) => {
+    const next = byId.get(node.id);
+    return next === undefined || node.status === next ? node : { ...node, status: next };
+  });
+}
+
+/**
+ * Merge a run's per-node I/O into the preview map. Steps that recorded an `io`
+ * summary overwrite their node's entry; steps without `io` (e.g. skipped
+ * dependency steps) leave the previous entry intact.
+ */
+function mergeNodeIo(
+  current: Record<string, NodeIoPreview>,
+  steps: RunRecord['steps']
+): Record<string, NodeIoPreview> {
+  let next = current;
+  for (const step of steps) {
+    if (!step.io) {
+      continue;
+    }
+    if (next === current) {
+      next = { ...current };
+    }
+    next[step.blockId] = { status: nodeStatusFromStep(step.status), ...step.io };
+  }
+  return next;
 }
 
 function upsertStep(steps: ConsoleState['steps'], next: ConsoleState['steps'][number]): ConsoleState['steps'] {

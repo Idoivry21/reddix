@@ -89,6 +89,9 @@ describe('parseFlowPutBody', () => {
     expect(
       parseFlowPutBody({ flow: { schedule: { enabled: true, intervalMs: -5 } } }).success
     ).toBe(false);
+    expect(
+      parseFlowPutBody({ flow: { schedule: { enabled: true, intervalMs: 1e100 } } }).success
+    ).toBe(false);
   });
 
   it('rejects malformed node positions', () => {
@@ -112,5 +115,24 @@ describe('parseRunPostBody', () => {
     expect(parseRunPostBody({ flowId: '' }).success).toBe(false);
     expect(parseRunPostBody({ flowId: '../escape' }).success).toBe(false);
     expect(parseRunPostBody({ flowId: 42 }).success).toBe(false);
+  });
+
+  it('accepts a single-node run body with nodeId and mode together', () => {
+    const result = parseRunPostBody({ flowId: 'primary-flow', nodeId: 'detail', mode: 'cached-upstream' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nodeId).toBe('detail');
+      expect(result.data.mode).toBe('cached-upstream');
+    }
+    expect(parseRunPostBody({ flowId: 'primary-flow', nodeId: 'detail', mode: 'static' }).success).toBe(true);
+  });
+
+  it('rejects nodeId without mode and mode without nodeId', () => {
+    expect(parseRunPostBody({ flowId: 'primary-flow', nodeId: 'detail' }).success).toBe(false);
+    expect(parseRunPostBody({ flowId: 'primary-flow', mode: 'static' }).success).toBe(false);
+  });
+
+  it('rejects an unknown run mode', () => {
+    expect(parseRunPostBody({ flowId: 'primary-flow', nodeId: 'detail', mode: 'live' }).success).toBe(false);
   });
 });

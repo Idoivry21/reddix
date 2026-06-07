@@ -92,4 +92,23 @@ describe('GET /api/artifacts/*', () => {
     expect(response.status).not.toBe(200);
     expect(await response.text()).not.toContain('TOPSECRET');
   });
+
+  it('rejects overlong artifact paths before filesystem lookup', async () => {
+    const { base } = await start();
+    const longName = 'a'.repeat(2100);
+
+    const response = await fetch(`${base}/api/artifacts/${longName}`);
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects oversized artifacts without serving them', async () => {
+    const { base, dataDir } = await start();
+    await mkdir(path.join(dataDir, 'artifacts', 'outputs'), { recursive: true });
+    await writeFile(path.join(dataDir, 'artifacts', 'outputs', 'large.txt'), Buffer.alloc(10 * 1024 * 1024 + 1, 65));
+
+    const response = await fetch(`${base}/api/artifacts/outputs/large.txt`);
+
+    expect(response.status).toBe(413);
+  });
 });

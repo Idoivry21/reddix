@@ -1,8 +1,26 @@
 import { buildBlockCommand, getBlockSpec } from '../shared/commandBuilders';
+import { inputBindingMeta, inputBoundFieldKeys, type InputBindingMeta } from '../shared/inputBindings';
+import { isBlank } from '../shared/values';
 import { accentForBlock, iconForBlock } from '../blockVisuals';
 import { Icon } from '../icons';
 import type { BuiltCommand, FieldSpec } from '../shared/types';
-import type { WorkbenchNode } from '../flowTypes';
+import type { NodeIoPreview, WorkbenchNode } from '../flowTypes';
+import type { RunNodeMode } from '../api';
+
+/** Per-node binding skip policy stored under a non-field settings key. */
+type BindPolicy = 'skip' | 'fail';
+
+function bindPolicyOf(settings: Record<string, unknown>): BindPolicy {
+  return settings.__bindPolicy === 'fail' ? 'fail' : 'skip';
+}
+
+function PlayIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
 
 function CubeIcon() {
   return (
@@ -27,10 +45,31 @@ interface InspectorProps {
   onSettingChange: (key: string, value: unknown) => void;
   onDelete?: () => void;
   onDuplicate?: () => void;
+  /** Run just this node in isolation, in the given mode. */
+  onRunNode?: (mode: RunNodeMode) => void;
+  /** True when the node has at least one incoming edge (binding mapper applies). */
+  hasUpstream?: boolean;
+  /** True when an upstream node has cached output from the last full run. */
+  hasCachedUpstream?: boolean;
+  /** A run is in flight — disable run controls. */
+  isRunning?: boolean;
+  /** Latest per-node I/O for the last-run panel. */
+  preview?: NodeIoPreview;
   readOnly?: boolean;
 }
 
-export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOnly = false }: InspectorProps) {
+export function Inspector({
+  node,
+  onSettingChange,
+  onDelete,
+  onDuplicate,
+  onRunNode,
+  hasUpstream = false,
+  hasCachedUpstream = false,
+  isRunning = false,
+  preview,
+  readOnly = false
+}: InspectorProps) {
   if (!node) {
     return (
       <aside className="inspector" aria-label="Inspector">
@@ -55,6 +94,9 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
   const spec = getBlockSpec(node.blockType);
   const accent = accentForBlock(spec.provider, spec.category);
   const fields = spec.fields;
+  const boundKeys = inputBoundFieldKeys(node.blockType);
+  const bindingMeta = inputBindingMeta(node.blockType);
+  const bindPolicy = bindPolicyOf(node.settings);
   let command: BuiltCommand | null = null;
   if (spec.executable) {
     try {
@@ -91,10 +133,30 @@ export function Inspector({ node, onSettingChange, onDelete, onDuplicate, readOn
             value={node.settings[field.key]}
             onChange={(value) => onSettingChange(field.key, value)}
             disabled={readOnly}
+            isInputBound={boundKeys.includes(field.key)}
           />
         ))}
 
+        {hasUpstream && bindingMeta.length > 0 ? (
+          <BindingMapper
+            bindings={bindingMeta}
+            policy={bindPolicy}
+            disabled={readOnly}
+            onPolicyChange={(value) => onSettingChange('__bindPolicy', value)}
+          />
+        ) : null}
+
         <CommandPreview command={command} executable={spec.executable} />
+
+        {!readOnly && spec.executable && onRunNode ? (
+          <RunNodeButtons
+            hasCachedUpstream={hasCachedUpstream}
+            isRunning={isRunning}
+            onRun={onRunNode}
+          />
+        ) : null}
+
+        {preview ? <LastRunPanel preview={preview} /> : null}
 
         {!readOnly ? (
           <div className="field-actions">
@@ -158,10 +220,13 @@ interface FieldProps {
   value: unknown;
   onChange: (value: unknown) => void;
   disabled?: boolean;
+  /** True when this field can be filled from an upstream node's output. */
+  isInputBound?: boolean;
 }
 
-function Field({ field, value, onChange, disabled = false }: FieldProps) {
+function Field({ field, value, onChange, disabled = false, isInputBound = false }: FieldProps) {
   const fieldId = `field-${field.key}`;
+  const showUpstreamHint = isInputBound && isBlank(value);
   return (
     <div className="field">
       <label className="field-label" id={`${fieldId}-label`} htmlFor={fieldId}>
@@ -224,6 +289,150 @@ function Field({ field, value, onChange, disabled = false }: FieldProps) {
           onChange={(event) => onChange(event.target.value)}
         />
       )}
+      {showUpstreamHint ? (
+        <p className="field-hint">
+          Leave blank to pull from upstream — runs once per item from a wired source.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+interface RunNodeButtonsProps {
+  hasCachedUpstream: boolean;
+  isRunning: boolean;
+  onRun: (mode: RunNodeMode) => void;
+}
+
+function RunNodeButtons({ hasCachedUpstream, isRunning, onRun }: RunNodeButtonsProps) {
+  return (
+    <div className="run-node">
+      <div className="cmd-label">run this block</div>
+      {hasCachedUpstream ? (
+        <>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary run-node-btn"
+            disabled={isRunning}
+            onClick={() => onRun('cached-upstream')}
+          >
+            <PlayIcon /> Run with cached upstream
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm run-node-btn"
+            disabled={isRunning}
+            onClick={() => onRun('static')}
+          >
+            Run with static settings
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-sm btn-primary run-node-btn"
+          disabled={isRunning}
+          onClick={() => onRun('static')}
+        >
+          <PlayIcon /> Run this block
+        </button>
+      )}
+    </div>
+  );
+}
+
+interface BindingMapperProps {
+  bindings: InputBindingMeta[];
+  policy: BindPolicy;
+  disabled: boolean;
+  onPolicyChange: (policy: BindPolicy) => void;
+}
+
+function BindingMapper({ bindings, policy, disabled, onPolicyChange }: BindingMapperProps) {
+  return (
+    <div className="bind-mapper">
+      <div className="cmd-label">upstream binding</div>
+      <ul className="bind-rows">
+        {bindings.map((binding) => (
+          <li className="bind-row" key={binding.fieldKey}>
+            <span className="bind-target">{binding.label}</span>
+            <span className="bind-arrow" aria-hidden="true">←</span>
+            <span className="bind-source">
+              upstream <code>{binding.sourceLabel}</code>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="bind-policy">
+        <span className="bind-policy-label" id="bind-policy-label">
+          On incompatible item
+        </span>
+        <div className="seg" role="group" aria-labelledby="bind-policy-label">
+          <button
+            type="button"
+            className={policy === 'skip' ? 'on' : ''}
+            aria-pressed={policy === 'skip'}
+            disabled={disabled}
+            onClick={() => onPolicyChange('skip')}
+          >
+            skip
+          </button>
+          <button
+            type="button"
+            className={policy === 'fail' ? 'on' : ''}
+            aria-pressed={policy === 'fail'}
+            disabled={disabled}
+            onClick={() => onPolicyChange('fail')}
+          >
+            fail node
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LastRunPanel({ preview }: { preview: NodeIoPreview }) {
+  return (
+    <div className="last-run">
+      <div className="cmd-label">last run</div>
+      <div className="lr-counts">
+        <span className="lr-count">{preview.inputCount} in</span>
+        <span className="lr-arrow" aria-hidden="true">→</span>
+        <span className="lr-count">{preview.outputCount} out</span>
+        {preview.skippedCount > 0 ? <span className="lr-count lr-skip">{preview.skippedCount} skipped</span> : null}
+      </div>
+      {preview.normalizedFields.length > 0 ? (
+        <div className="lr-fields" aria-label="Normalized fields">
+          {preview.normalizedFields.map((fieldName) => (
+            <span className="lr-chip" key={fieldName}>
+              {fieldName}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {preview.sampleItems.length > 0 ? (
+        <table className="lr-table">
+          <thead>
+            <tr>
+              <th>platform</th>
+              <th>id</th>
+              <th>title</th>
+              <th>author</th>
+            </tr>
+          </thead>
+          <tbody>
+            {preview.sampleItems.slice(0, 5).map((item, index) => (
+              <tr key={`${item.id}-${index}`}>
+                <td>{item.platform}</td>
+                <td>{item.id}</td>
+                <td>{item.title ?? (item.text || '—')}</td>
+                <td>{item.author ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
     </div>
   );
 }

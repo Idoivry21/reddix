@@ -1,6 +1,22 @@
+import type { RunStepSampleItem } from './shared/types';
+
 export type NodeStatus = 'idle' | 'pending' | 'running' | 'success' | 'error';
 
 export type RunStatusKind = 'idle' | 'running' | 'success' | 'warning' | 'error';
+
+/**
+ * Per-node I/O preview derived from the latest run that touched a node: counts
+ * for the card badges, plus the normalized field list and capped sample rows the
+ * Inspector renders. Absent for nodes that have not run.
+ */
+export interface NodeIoPreview {
+  status: NodeStatus;
+  inputCount: number;
+  outputCount: number;
+  skippedCount: number;
+  normalizedFields: string[];
+  sampleItems: RunStepSampleItem[];
+}
 
 export interface RunStatus {
   kind: RunStatusKind;

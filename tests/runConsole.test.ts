@@ -72,6 +72,16 @@ describe('runRecordToConsoleState', () => {
     expect(state.results).toEqual([]);
   });
 
+  it('maps the run sample metadata into resultsMeta for the preview caption', () => {
+    const withMeta: RunRecord = {
+      ...run,
+      sample: [{ platform: 'twitter', id: 't1', title: 'A tweet', author: 'puba', score: 0, created: '2026-06-07', url: null }],
+      sampleMeta: { sourceLabel: 'Tweet Detail', saved: false, totalItems: 15 }
+    };
+    const state = runRecordToConsoleState(withMeta, prev, nodeTypeById);
+    expect(state.resultsMeta).toEqual({ sourceLabel: 'Tweet Detail', saved: false, totalItems: 15 });
+  });
+
   it('summarizes output files and step errors in logs', () => {
     const state = runRecordToConsoleState(run, prev, nodeTypeById);
 
@@ -117,5 +127,12 @@ describe('toConsoleStep', () => {
     const consoleStep = toConsoleStep(run.steps[0], undefined);
 
     expect(consoleStep).toMatchObject({ id: 'search', label: 'search', sublabel: '' });
+  });
+
+  it('threads the per-node io summary through to the console step', () => {
+    const io = { inputCount: 3, outputCount: 2, skippedCount: 1, normalizedFields: ['id', 'author'], sampleItems: [] };
+    const consoleStep = toConsoleStep({ ...run.steps[0], io }, 'reddit.searchPosts');
+
+    expect(consoleStep.io).toEqual(io);
   });
 });

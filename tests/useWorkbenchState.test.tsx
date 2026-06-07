@@ -36,6 +36,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('useWorkbenchState run → report link wiring', () => {
@@ -105,5 +106,215 @@ describe('useWorkbenchState validation, progress, and history', () => {
       const matches = result.current.consoleState.history.filter((entry) => entry.id === 'hist-1');
       expect(matches).toHaveLength(1);
     });
+  });
+
+  it('runs a single node, refreshing only that node and its io preview', async () => {
+    const nodeRun: RunRecord = {
+      schemaVersion: 1,
+      id: 'noderun-1',
+      flowId: 'primary-flow',
+      status: 'success',
+      startedAt: '2026-06-07T12:00:00.000Z',
+      endedAt: '2026-06-07T12:00:01.000Z',
+      steps: [
+        {
+          blockId: 'reddit-search',
+          status: 'success',
+          startedAt: '2026-06-07T12:00:00.000Z',
+          endedAt: '2026-06-07T12:00:01.000Z',
+          io: { inputCount: 0, outputCount: 3, skippedCount: 1, normalizedFields: ['id', 'title'], sampleItems: [] }
+        }
+      ],
+      outputFiles: [],
+      error: null,
+      trigger: { kind: 'single-node', nodeId: 'reddit-search', mode: 'static' }
+    };
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/runs') {
+        return jsonResponse({ run: nodeRun });
+      }
+      if (/\/api\/runs\/[^/]+$/.test(url)) {
+        return jsonResponse({ runs: [] });
+      }
+      return jsonResponse({ flow: {} });
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useWorkbenchState());
+
+    await act(async () => {
+      await result.current.runNode('reddit-search', 'static');
+    });
+
+    await waitFor(() => {
+      expect(result.current.nodeIoPreview['reddit-search']).toMatchObject({
+        outputCount: 3,
+        skippedCount: 1,
+        status: 'success'
+      });
+    });
+    // A single-node run must not touch the rest of the canvas.
+    expect(result.current.nodes.find((node) => node.id === 'reddit-filter')?.status).toBe('idle');
+  });
+
+  it('reports upstream and cached-upstream availability', async () => {
+    const fullRun: RunRecord = {
+      schemaVersion: 1,
+      id: 'full-1',
+      flowId: 'primary-flow',
+      status: 'success',
+      startedAt: '2026-06-07T12:00:00.000Z',
+      endedAt: '2026-06-07T12:00:02.000Z',
+      steps: [
+        {
+          blockId: 'reddit-search',
+          status: 'success',
+          startedAt: '2026-06-07T12:00:00.000Z',
+          endedAt: '2026-06-07T12:00:01.000Z',
+          io: { inputCount: 0, outputCount: 5, skippedCount: 0, normalizedFields: ['id'], sampleItems: [] }
+        }
+      ],
+      outputFiles: [],
+      error: null
+    };
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/runs') {
+        return jsonResponse({ run: fullRun });
+      }
+      if (/\/api\/runs\/[^/]+$/.test(url)) {
+        return jsonResponse({ runs: [] });
+      }
+      return jsonResponse({ flow: {} });
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useWorkbenchState());
+
+    expect(result.current.hasUpstream('reddit-search')).toBe(false);
+    expect(result.current.hasUpstream('reddit-filter')).toBe(true);
+    expect(result.current.hasCachedUpstream('reddit-filter')).toBe(false);
+
+    await act(async () => {
+      await result.current.runNow();
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasCachedUpstream('reddit-filter')).toBe(true);
+    });
+  });
+
+  it('surfaces live update stream errors while a run is active', async () => {
+    const listeners: Record<string, (event: MessageEvent) => void> = {};
+    class FakeEventSource {
+      readyState = 0;
+      addEventListener(type: string, handler: (event: MessageEvent) => void) {
+        listeners[type] = handler;
+      }
+      close = vi.fn();
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    let resolveRun!: (response: Response) => void;
+    const pendingRun = new Promise<Response>((resolve) => {
+      resolveRun = resolve;
+    });
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (/\/api\/runs\/[^/]+$/.test(url)) {
+        return jsonResponse({ runs: [] });
+      }
+      if (url === '/api/runs') {
+        return pendingRun;
+      }
+      return jsonResponse({ flow: {} });
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useWorkbenchState());
+    let runNowPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      runNowPromise = result.current.runNow();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.isRunning).toBe(true);
+    });
+
+    act(() => {
+      listeners.error?.({ data: '' } as MessageEvent);
+    });
+
+    expect(result.current.consoleState.logs[0]).toMatch(/live updates/i);
+    expect(result.current.toasts.some((toast) => /live updates/i.test(toast.message))).toBe(true);
+
+    await act(async () => {
+      resolveRun(jsonResponse({ run: runWithReport }));
+      await runNowPromise;
+    });
+  });
+});
+
+describe('useWorkbenchState spliceNodeIntoEdge', () => {
+  it('replaces an edge with source→node→target using compatible ports', () => {
+    const { result } = renderHook(() => useWorkbenchState());
+
+    act(() => {
+      result.current.addBlock('transform.limit', 700, 280);
+    });
+    const newId = result.current.selectedNodeId as string;
+
+    act(() => {
+      result.current.spliceNodeIntoEdge(newId, 'e-merge-sort');
+    });
+
+    const { edges } = result.current;
+    expect(edges.some((edge) => edge.id === 'e-merge-sort')).toBe(false);
+    expect(
+      edges.some((edge) => edge.source === 'merge' && edge.target === newId && edge.targetPortId === 'items')
+    ).toBe(true);
+    expect(
+      edges.some((edge) => edge.source === newId && edge.target === 'sort' && edge.targetPortId === 'items')
+    ).toBe(true);
+  });
+
+  it('rejects a pure Source node, leaving the edge intact and toasting', () => {
+    const { result } = renderHook(() => useWorkbenchState());
+
+    act(() => {
+      result.current.addBlock('reddit.searchPosts', 700, 280);
+    });
+    const sourceId = result.current.selectedNodeId as string;
+    const before = result.current.edges;
+
+    act(() => {
+      result.current.spliceNodeIntoEdge(sourceId, 'e-merge-sort');
+    });
+
+    // No-op: same edges array reference (immutable, untouched) and an error toast.
+    expect(result.current.edges).toBe(before);
+    expect(result.current.edges.some((edge) => edge.id === 'e-merge-sort')).toBe(true);
+    expect(result.current.toasts.some((toast) => toast.kind === 'error')).toBe(true);
+  });
+
+  it('preserves a pre-existing node edge and does not duplicate it on splice', () => {
+    const { result } = renderHook(() => useWorkbenchState());
+
+    act(() => {
+      result.current.addBlock('transform.limit', 700, 280);
+    });
+    const newId = result.current.selectedNodeId as string;
+    // Wire merge→newId first, then splice newId into merge→sort: the splice's own
+    // merge→newId addition must be deduped against the edge that already exists.
+    act(() => {
+      result.current.connect('merge', 'items', newId, 'items');
+    });
+
+    act(() => {
+      result.current.spliceNodeIntoEdge(newId, 'e-merge-sort');
+    });
+
+    const { edges } = result.current;
+    expect(edges.some((edge) => edge.id === 'e-merge-sort')).toBe(false);
+    expect(edges.filter((edge) => edge.source === 'merge' && edge.target === newId)).toHaveLength(1);
+    expect(edges.some((edge) => edge.source === newId && edge.target === 'sort')).toBe(true);
   });
 });
