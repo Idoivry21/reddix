@@ -1,7 +1,0 @@
-{
-  "timestamp": "2026-06-06T21:28:10Z",
-  "changed_file": "tests/scheduleCadence.test.ts",
-  "test_command": "npm test",
-  "related_test": "",
-  "recommendation": "テストの実行を推奨します"
-}
