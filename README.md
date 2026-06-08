@@ -1,4 +1,16 @@
-# Reddix
+<div align="center">
+
+# 🔭 Reddix
+
+**Local canvas automation for read-only Reddit & X/Twitter research**
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-20.19%2B-339933?logo=node.js&logoColor=white)](#requirements)
+[![Tests](https://img.shields.io/badge/tests-Vitest%20%2B%20Playwright-6E9F18.svg)](#testing)
+
+[Quick Start](#development) · [Tool choices](#current-tool-choices) · [Exports](#exports-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+
+</div>
 
 A **local, single-user** canvas automation workbench that wraps two external
 CLIs — `rdt-cli` (Reddit, binary `rdt`) and `twitter-cli` (X/Twitter, binary

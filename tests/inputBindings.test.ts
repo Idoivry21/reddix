@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   blankBoundFieldKeys,
+  boundFieldKeys,
   inputBindingMeta,
+  resolveInputBoundSettings,
   resolveInputBoundSettingsForItem
 } from '../src/shared/inputBindings';
 import type { SocialItem } from '../src/shared/types';
@@ -102,5 +104,99 @@ describe('resolveInputBoundSettingsForItem', () => {
     const settings = { tweetIdOrUrl: '', fullText: true };
     resolveInputBoundSettingsForItem('twitter.tweetDetail', settings, tweet({ id: '999' }));
     expect(settings.tweetIdOrUrl).toBe('');
+  });
+});
+
+describe('boundFieldKeys', () => {
+  it('unions the default-bound keys with the user __bindings keys', () => {
+    expect(
+      boundFieldKeys('twitter.tweetDetail', { tweetIdOrUrl: '', __bindings: { fullText: 'text' } })
+    ).toEqual(['tweetIdOrUrl', 'fullText']);
+  });
+
+  it('reports a user binding on a block with no default bindings', () => {
+    expect(boundFieldKeys('twitter.searchTweets', { query: '', __bindings: { query: 'text' } })).toEqual([
+      'query'
+    ]);
+  });
+
+  it('does not duplicate a key bound both by default and by the user', () => {
+    expect(
+      boundFieldKeys('twitter.tweetDetail', { tweetIdOrUrl: '', __bindings: { tweetIdOrUrl: 'url' } })
+    ).toEqual(['tweetIdOrUrl']);
+  });
+});
+
+describe('blankBoundFieldKeys with user bindings', () => {
+  it('includes a blank user-bound field on a source block', () => {
+    expect(blankBoundFieldKeys('twitter.searchTweets', { query: '', __bindings: { query: 'text' } })).toEqual([
+      'query'
+    ]);
+  });
+
+  it('excludes a user-bound field that has a static value', () => {
+    expect(
+      blankBoundFieldKeys('twitter.searchTweets', { query: 'cli', __bindings: { query: 'text' } })
+    ).toEqual([]);
+  });
+});
+
+describe('resolveInputBoundSettingsForItem with user bindings', () => {
+  it('fills a user-bound field on a source block from the item', () => {
+    const resolved = resolveInputBoundSettingsForItem(
+      'twitter.searchTweets',
+      { query: '', __bindings: { query: 'author' } },
+      tweet({ author: 'someone' })
+    );
+    expect(resolved).toEqual({ query: 'someone', __bindings: { query: 'author' } });
+  });
+
+  it('lets a user binding override the default source field', () => {
+    const resolved = resolveInputBoundSettingsForItem(
+      'twitter.tweetDetail',
+      { tweetIdOrUrl: '', fullText: true, __bindings: { tweetIdOrUrl: 'url' } },
+      tweet({ id: '999', url: 'https://x.com/u/status/abc' })
+    );
+    expect(resolved).toMatchObject({ tweetIdOrUrl: 'https://x.com/u/status/abc' });
+  });
+
+  it('stringifies a numeric engagement field bound by the user', () => {
+    const resolved = resolveInputBoundSettingsForItem(
+      'twitter.searchTweets',
+      { query: '', __bindings: { query: 'engagement.likes' } },
+      tweet({ engagement: { likes: 12 } })
+    );
+    expect(resolved).toMatchObject({ query: '12' });
+  });
+
+  it('returns null when the bound upstream field is empty on the item', () => {
+    expect(
+      resolveInputBoundSettingsForItem(
+        'twitter.searchTweets',
+        { query: '', __bindings: { query: 'community' } },
+        tweet({ community: null })
+      )
+    ).toBeNull();
+  });
+});
+
+describe('resolveInputBoundSettings (first-match) with user bindings', () => {
+  it('fills from the first item that supplies the bound value', () => {
+    const resolved = resolveInputBoundSettings(
+      'twitter.searchTweets',
+      { query: '', __bindings: { query: 'author' } },
+      [tweet({ author: null }), tweet({ author: 'second' })]
+    );
+    expect(resolved).toMatchObject({ query: 'second' });
+  });
+
+  it('throws when no upstream item supplies the bound value', () => {
+    expect(() =>
+      resolveInputBoundSettings(
+        'twitter.searchTweets',
+        { query: '', __bindings: { query: 'community' } },
+        [tweet({ community: null })]
+      )
+    ).toThrow(/could not be resolved/);
   });
 });

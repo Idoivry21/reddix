@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { NodeCard } from '../src/components/NodeCard';
+import { outputFieldsForBlock } from '../src/shared/fieldSchema';
 import type { NodeIoPreview, NodeStatus, WorkbenchNode } from '../src/flowTypes';
 
 function makeNode(status: NodeStatus): WorkbenchNode {
@@ -82,5 +83,74 @@ describe('NodeCard io preview badges', () => {
     // reddit.searchPosts is a source with one output port.
     expect(screen.getByText('source')).toBeInTheDocument();
     expect(screen.getByText('1 out')).toBeInTheDocument();
+  });
+});
+
+describe('NodeCard io field hints', () => {
+  it('renders output field chips and no inputs row for a source block', () => {
+    const { container } = render(
+      <NodeCard
+        node={makeNode('idle')}
+        isSelected={false}
+        onMeasure={vi.fn()}
+        onSelect={vi.fn()}
+        outputFields={outputFieldsForBlock('reddit.searchPosts')}
+        inputFields={[]}
+      />
+    );
+    expect(screen.getByText('ID')).toBeInTheDocument();
+    expect(screen.getByText('Author')).toBeInTheDocument();
+    expect(container.querySelector('.nio-in')).toBeNull();
+  });
+
+  it('shows an "N available" inputs hint for a downstream transform', () => {
+    const node: WorkbenchNode = { ...makeNode('idle'), id: 'limit', blockType: 'transform.limit', label: 'Limit' };
+    render(
+      <NodeCard
+        node={node}
+        isSelected={false}
+        onMeasure={vi.fn()}
+        onSelect={vi.fn()}
+        outputFields={outputFieldsForBlock('transform.limit')}
+        inputFields={outputFieldsForBlock('reddit.searchPosts')}
+      />
+    );
+    expect(screen.getByText(`${outputFieldsForBlock('reddit.searchPosts').length} available`)).toBeInTheDocument();
+  });
+
+  it('marks a field chip live when the last run produced that field', () => {
+    const { container } = render(
+      <NodeCard
+        node={makeNode('success')}
+        isSelected={false}
+        onMeasure={vi.fn()}
+        onSelect={vi.fn()}
+        preview={{
+          status: 'success',
+          inputCount: 0,
+          outputCount: 3,
+          skippedCount: 0,
+          normalizedFields: ['author'],
+          sampleItems: []
+        }}
+        outputFields={outputFieldsForBlock('reddit.searchPosts')}
+      />
+    );
+    const live = container.querySelector('.nio-chip.live');
+    expect(live?.textContent).toBe('Author');
+  });
+
+  it('collapses overflow output fields into a +N chip', () => {
+    render(
+      <NodeCard
+        node={makeNode('idle')}
+        isSelected={false}
+        onMeasure={vi.fn()}
+        onSelect={vi.fn()}
+        outputFields={outputFieldsForBlock('reddit.searchPosts')}
+      />
+    );
+    const total = outputFieldsForBlock('reddit.searchPosts').length;
+    expect(screen.getByText(`+${total - 4}`)).toBeInTheDocument();
   });
 });

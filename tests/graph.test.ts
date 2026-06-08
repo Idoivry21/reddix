@@ -155,6 +155,41 @@ describe('graph validation', () => {
     );
   });
 
+  it('exempts a user-bound required field and accepts a binding to a provided upstream field', () => {
+    const result = validateFlow({
+      nodes: [
+        { id: 'search', type: 'twitter.searchTweets', settings: { query: 'cli', tab: 'latest', maxCount: 10 } },
+        {
+          id: 'article',
+          type: 'twitter.article',
+          settings: { articleIdOrUrl: '', format: 'json', __bindings: { articleIdOrUrl: 'url' } }
+        }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'article', sourcePortId: 'items', targetPortId: 'items' }]
+    });
+
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  it('reports a dangling binding to a field no upstream node provides', () => {
+    const result = validateFlow({
+      nodes: [
+        { id: 'search', type: 'twitter.searchTweets', settings: { query: 'cli', tab: 'latest', maxCount: 10 } },
+        {
+          id: 'article',
+          type: 'twitter.article',
+          settings: { articleIdOrUrl: '', format: 'json', __bindings: { articleIdOrUrl: 'community' } }
+        }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'article', sourcePortId: 'items', targetPortId: 'items' }]
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual([
+      { nodeId: 'article', message: 'Field "articleIdOrUrl" is bound to "community", which no upstream node provides' }
+    ]);
+  });
+
   it('validates a deep acyclic graph without recursive stack overflow', () => {
     const nodes = Array.from({ length: 6000 }, (_unused, index) => ({
       id: `n-${index}`,

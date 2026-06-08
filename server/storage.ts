@@ -45,6 +45,24 @@ export function createStorage(options: StorageOptions) {
       return normalizePersistedFlow(raw, filePath, logger);
     },
 
+    /**
+     * Remove a flow and its run history. Idempotent: a missing flow file is not
+     * an error — resolves `false` so the route can answer 404. Takes both per-flow
+     * locks (flow first, then runs) so a concurrent saveFlow/appendRun can't
+     * resurrect a half-deleted flow; no other path acquires both, so the fixed
+     * lock order cannot deadlock.
+     */
+    async deleteFlow(flowId: string): Promise<boolean> {
+      const flowPath = safeSegmentPath(flowsDir, flowId, '.json');
+      const runsPath = safeSegmentPath(runsDir, flowId, '.json');
+      return flowWriteMutex.run(flowId, async () => {
+        await ensureDirs();
+        const existed = await unlinkIfExists(flowPath, logger);
+        await runWriteMutex.run(flowId, () => unlinkIfExists(runsPath, logger));
+        return existed;
+      });
+    },
+
     async listFlows(): Promise<PersistedFlow[]> {
       await ensureDirs();
       const files = await readdir(flowsDir);
@@ -153,6 +171,24 @@ function isRunRecord(value: unknown): value is RunRecord {
     Array.isArray(value.outputFiles) &&
     (typeof value.error === 'string' || value.error === null)
   );
+}
+
+/** Unlink a file, treating "already gone" as success. Returns whether a file was
+ *  actually removed so callers can distinguish a real delete from a no-op. */
+async function unlinkIfExists(filePath: string, logger?: EventLogger): Promise<boolean> {
+  try {
+    await unlink(filePath);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return false;
+    }
+    logger?.error('storage.deleteFailed', {
+      path: filePath,
+      detail: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
 }
 
 async function readJson<T>(filePath: string, fallback: T, logger?: EventLogger): Promise<T> {

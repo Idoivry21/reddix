@@ -121,6 +121,23 @@ export async function saveFlow(flowId: string, body: FlowRequestBody): Promise<P
   return payload.flow;
 }
 
+/**
+ * Delete a saved flow and its run history. Resolves `true` when the backend
+ * removed it (204), `false` when it was already gone (404) — both mean the flow
+ * no longer exists, so callers can clear local state either way. Other failures
+ * throw with the backend's error detail.
+ */
+export async function deleteFlow(flowId: string): Promise<boolean> {
+  const response = await fetch(`/api/flows/${flowId}`, { method: 'DELETE' });
+  if (response.status === 404) {
+    return false;
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to delete flow'));
+  }
+  return true;
+}
+
 export async function postRun(flowId: string): Promise<RunRecord> {
   const response = await fetch('/api/runs', {
     method: 'POST',

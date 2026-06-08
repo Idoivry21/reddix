@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { postRun, saveFlow, subscribeRunEvents } from '../src/api';
+import { deleteFlow, postRun, saveFlow, subscribeRunEvents } from '../src/api';
 import type { RunRecord } from '../src/shared/types';
 
 afterEach(() => {
@@ -45,6 +45,28 @@ describe('saveFlow', () => {
     await expect(saveFlow('primary', { flow: {} } as never)).rejects.toThrow(
       'Invalid flow graph: node3: missing required field'
     );
+  });
+});
+
+describe('deleteFlow', () => {
+  it('DELETEs the flow and resolves true on 204', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(null, true, 204));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(deleteFlow('primary')).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith('/api/flows/primary', { method: 'DELETE' });
+  });
+
+  it('resolves false on 404 (already gone) without throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'Flow not found' }, false, 404)));
+
+    await expect(deleteFlow('primary')).resolves.toBe(false);
+  });
+
+  it('throws the server error message on other failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'Invalid flow id' }, false, 400)));
+
+    await expect(deleteFlow('..bad')).rejects.toThrow('Invalid flow id');
   });
 });
 

@@ -1,7 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Inspector } from '../src/components/Inspector';
+import { outputFieldsForBlock, type FieldDescriptor } from '../src/shared/fieldSchema';
 import type { NodeIoPreview, WorkbenchNode } from '../src/flowTypes';
+
+const authorField: FieldDescriptor = { key: 'author', label: 'Author', type: 'string', platform: 'both' };
+const idField: FieldDescriptor = { key: 'id', label: 'ID', type: 'string', platform: 'both' };
 
 function redditNode(settings: Record<string, unknown> = {}): WorkbenchNode {
   return {
@@ -113,6 +117,88 @@ describe('Inspector upstream binding mapper', () => {
     expect(screen.getByRole('button', { name: 'skip' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: /fail node/i }));
     expect(onSettingChange).toHaveBeenCalledWith('__bindPolicy', 'fail');
+  });
+});
+
+describe('Inspector input/output field panels', () => {
+  it('lists available upstream fields when the node has upstream', () => {
+    render(
+      <Inspector node={tweetDetailNode()} onSettingChange={vi.fn()} hasUpstream inputFields={[authorField]} />
+    );
+    expect(screen.getByText('available inputs')).toBeInTheDocument();
+    expect(screen.getByText('author')).toBeInTheDocument();
+  });
+
+  it('renders the static output schema and embeds the last-run panel', () => {
+    render(
+      <Inspector
+        node={redditNode()}
+        onSettingChange={vi.fn()}
+        outputFields={outputFieldsForBlock('reddit.searchPosts')}
+        preview={{
+          status: 'success',
+          inputCount: 0,
+          outputCount: 3,
+          skippedCount: 0,
+          normalizedFields: ['author'],
+          sampleItems: []
+        }}
+      />
+    );
+    expect(screen.getByText('outputs')).toBeInTheDocument();
+    expect(screen.getByText('community')).toBeInTheDocument(); // a reddit output key
+    const { container } = render(
+      <Inspector
+        node={redditNode()}
+        onSettingChange={vi.fn()}
+        outputFields={outputFieldsForBlock('reddit.searchPosts')}
+        preview={{
+          status: 'success',
+          inputCount: 0,
+          outputCount: 3,
+          skippedCount: 0,
+          normalizedFields: ['author'],
+          sampleItems: []
+        }}
+      />
+    );
+    expect(container.querySelector('.io-row.live .io-key')?.textContent).toBe('author');
+  });
+});
+
+describe('Inspector field mapping picker', () => {
+  it('writes __bindings and disables the field when bound from upstream', () => {
+    const onSettingChange = vi.fn();
+    render(
+      <Inspector
+        node={tweetDetailNode()}
+        onSettingChange={onSettingChange}
+        hasUpstream
+        inputFields={[authorField]}
+      />
+    );
+    fireEvent.change(screen.getByLabelText(/Map Tweet ID or URL from upstream/i), {
+      target: { value: 'author' }
+    });
+    expect(onSettingChange).toHaveBeenCalledWith('__bindings', { tweetIdOrUrl: 'author' });
+  });
+
+  it('disables a bound field, shows the upstream chip, and unbinds on clear', () => {
+    const onSettingChange = vi.fn();
+    render(
+      <Inspector
+        node={tweetDetailNode({ __bindings: { tweetIdOrUrl: 'id' } })}
+        onSettingChange={onSettingChange}
+        hasUpstream
+        inputFields={[idField]}
+      />
+    );
+    expect(screen.getByLabelText('Tweet ID or URL')).toBeDisabled();
+    expect(screen.getByText('upstream.ID')).toBeInTheDocument();
+    // The bind-mapper overview lists the user binding as a removable row.
+    expect(screen.getByText('id')).toBeInTheDocument(); // upstream source label in the mapper row
+    fireEvent.click(screen.getAllByRole('button', { name: /Unbind Tweet ID or URL/i })[0]);
+    expect(onSettingChange).toHaveBeenCalledWith('__bindings', {});
   });
 });
 

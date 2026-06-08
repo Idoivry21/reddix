@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBlockSpec, getDefaultSettings } from '../shared/commandBuilders';
 import { canConnect, validateFlow } from '../shared/graph';
 import {
+  deleteFlow,
   getFlow,
   listFlows,
   listRuns,
@@ -664,6 +665,26 @@ export function useWorkbenchState() {
     setShowDashboard(false);
   }, []);
 
+  // Delete a saved flow. Removes it from the dashboard list; if it was the flow
+  // currently open on the canvas, reset to a fresh blank flow so the editor never
+  // points at a flow that no longer exists. A 404 (already gone) is still success.
+  const removeFlow = useCallback(
+    async (flowId: string) => {
+      try {
+        await deleteFlow(flowId);
+        setFlowSummaries((summaries) => summaries.filter((flow) => flow.id !== flowId));
+        if (flowId === activeFlowIdRef.current) {
+          newFlow();
+        }
+        pushToast('Flow deleted', 'success');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unexpected error';
+        pushToast(`Failed to delete flow: ${message}`, 'error');
+      }
+    },
+    [newFlow, pushToast]
+  );
+
   return {
     activeFlowId,
     nodes,
@@ -719,6 +740,7 @@ export function useWorkbenchState() {
     dashboardFlows,
     openFlow,
     newFlow,
+    removeFlow,
     toasts,
     pushToast,
     dismissToast,

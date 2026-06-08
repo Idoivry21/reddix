@@ -3,6 +3,7 @@ import { NodeCard } from './NodeCard';
 import { Icon } from '../icons';
 import { getBlockSpec } from '../shared/commandBuilders';
 import { canConnect } from '../shared/graph';
+import { availableInputFields, outputFieldsForBlock } from '../shared/fieldSchema';
 import { accentForBlock, type AccentKey } from '../blockVisuals';
 import {
   CANVAS_GEOMETRY,
@@ -370,6 +371,32 @@ export function Canvas(props: CanvasProps) {
     [nodes]
   );
 
+  // Static output schema per node; depends only on block types, so dragging a node
+  // (a position-only change) never recomputes it.
+  const blockTypeSig = nodes.map((node) => node.blockType).join('|');
+  const outputFieldsById = useMemo(
+    () => Object.fromEntries(nodes.map((node) => [node.id, outputFieldsForBlock(node.blockType)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on block types, not node identity
+    [blockTypeSig]
+  );
+
+  // Upstream field unions per node. Keyed on a topology signature (ids, types, and
+  // edges) so it recomputes on wiring changes but not on pure position drags.
+  const topoSig =
+    nodes.map((node) => `${node.id}:${node.blockType}`).join('|') +
+    '##' +
+    edges.map((edge) => `${edge.source}>${edge.target}`).join('|');
+  const inputFieldsById = useMemo(
+    () => {
+      const graphNodes = nodes.map((node) => ({ id: node.id, type: node.blockType }));
+      return Object.fromEntries(
+        nodes.map((node) => [node.id, availableInputFields(node.id, graphNodes, edges)])
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on topology signature
+    [topoSig]
+  );
+
   const activeEdges = useMemo(() => {
     const active = new Set<string>();
     for (const edge of edges) {
@@ -500,6 +527,8 @@ export function Canvas(props: CanvasProps) {
             onMeasure={onMeasure}
             onSelect={onSelectNode}
             preview={nodeIoPreview?.[node.id]}
+            outputFields={outputFieldsById[node.id]}
+            inputFields={inputFieldsById[node.id]}
           />
         ))}
 

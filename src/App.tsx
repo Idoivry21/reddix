@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+import { availableInputFields, outputFieldsForBlock } from './shared/fieldSchema';
 import { BlockPalette } from './components/BlockPalette';
 import { Canvas } from './components/Canvas';
 import { ConsolePanel } from './components/ConsolePanel';
@@ -22,6 +23,23 @@ export function App() {
   const { showWelcome, dismissOnboarding } = useOnboarding();
 
   const { selectedNodeId, selectedEdgeId, deleteNode, deleteEdge, runNow } = workbench;
+
+  const selectedNode = workbench.selectedNode;
+  const selectedInputFields = useMemo(
+    () =>
+      selectedNode
+        ? availableInputFields(
+            selectedNode.id,
+            workbench.nodes.map((node) => ({ id: node.id, type: node.blockType })),
+            workbench.edges
+          )
+        : [],
+    [selectedNode, workbench.nodes, workbench.edges]
+  );
+  const selectedOutputFields = useMemo(
+    () => (selectedNode ? outputFieldsForBlock(selectedNode.blockType) : []),
+    [selectedNode]
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -124,6 +142,8 @@ export function App() {
           hasCachedUpstream={workbench.selectedNode ? workbench.hasCachedUpstream(workbench.selectedNode.id) : false}
           isRunning={workbench.isRunning}
           preview={workbench.selectedNode ? workbench.nodeIoPreview[workbench.selectedNode.id] : undefined}
+          inputFields={selectedInputFields}
+          outputFields={selectedOutputFields}
           readOnly={readOnly}
         />
       ) : null}
@@ -155,6 +175,7 @@ export function App() {
           onOpen={(id) => workbench.openFlow(id)}
           onClose={() => workbench.setShowDashboard(false)}
           onNew={workbench.newFlow}
+          onDelete={workbench.removeFlow}
         />
       ) : null}
 

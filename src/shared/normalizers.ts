@@ -14,7 +14,7 @@ export function normalizeRedditPayload(
   sourceBlockId: string,
   onUnrecognized?: UnrecognizedPayloadHandler
 ): SocialItem[] {
-  return extractArray(payload, onUnrecognized).map((raw) => {
+  return flattenRedditListings(extractArray(payload, onUnrecognized)).map((raw) => {
     const title = stringValue(raw.title);
     const body = stringValue(raw.selftext ?? raw.body);
     return {
@@ -108,6 +108,42 @@ function extractArray(payload: unknown, onUnrecognized?: UnrecognizedPayloadHand
     onUnrecognized?.({ keys: Object.keys(value) });
   }
   return [];
+}
+
+/**
+ * Unwrap reddit's native Listing envelope. rdt's `--compact` commands (search,
+ * browse, popular) return flat post objects, but `rdt read` has no compact mode
+ * and emits reddit's raw shape: `data` is one or more
+ * `{ kind:"Listing", data:{ children:[ { kind, data } ] } }` wrappers whose
+ * children carry the post under `t3` and comments under `t1`. Flatten those to
+ * the inner post objects, keeping only posts (`t3`) and dropping comment listings
+ * (`t1`) and the `more` sentinel. Records that are already flat posts (compact
+ * mode) carry no Listing wrapper and pass through unchanged.
+ */
+function flattenRedditListings(records: RawRecord[]): RawRecord[] {
+  if (!records.some((record) => record.kind === 'Listing' || record.kind === 't3')) {
+    return records;
+  }
+  const posts: RawRecord[] = [];
+  for (const record of records) {
+    if (record.kind === 'Listing' && isRecord(record.data)) {
+      for (const child of listingChildren(record.data)) {
+        if (child.kind === 't3' && isRecord(child.data)) {
+          posts.push(child.data);
+        }
+      }
+    } else if (record.kind === 't3' && isRecord(record.data)) {
+      posts.push(record.data);
+    } else {
+      posts.push(record);
+    }
+  }
+  return posts;
+}
+
+function listingChildren(listingData: RawRecord): RawRecord[] {
+  const children = listingData.children;
+  return Array.isArray(children) ? children.filter(isRecord) : [];
 }
 
 function stringValue(value: unknown): string | null {

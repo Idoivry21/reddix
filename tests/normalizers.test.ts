@@ -106,6 +106,66 @@ describe('payload normalizers', () => {
     });
   });
 
+  it('unwraps the reddit Listing envelope from `rdt read` (post t3, not the Listing wrapper)', () => {
+    // `rdt read` has no --compact mode, so it returns reddit's raw shape: data is
+    // [postListing, commentsListing], each a { kind:"Listing", data:{ children } }
+    // wrapper. Without unwrapping, the Listing wrappers normalize to all-null items
+    // (empty title/author/id + epoch date) — the blank-report bug.
+    const items = normalizeRedditPayload(
+      {
+        ok: true,
+        schema_version: '1',
+        data: [
+          {
+            kind: 'Listing',
+            data: {
+              children: [
+                {
+                  kind: 't3',
+                  data: {
+                    id: '1txzrc6',
+                    name: 't3_1txzrc6',
+                    title: 'I built a local PDF-to-Markdown converter',
+                    author: 'mxsus',
+                    subreddit: 'ClaudeAI',
+                    selftext: 'Body text',
+                    created_utc: 1780699037,
+                    score: 536,
+                    num_comments: 12,
+                    permalink: '/r/ClaudeAI/comments/1txzrc6/x/'
+                  }
+                }
+              ]
+            }
+          },
+          {
+            kind: 'Listing',
+            data: {
+              children: [
+                { kind: 't1', data: { id: 'c1', body: 'a comment', author: 'someone' } },
+                { kind: 'more', data: { count: 5 } }
+              ]
+            }
+          }
+        ]
+      },
+      'reddit.readPost'
+    );
+
+    // Only the post survives — comment listings (t1) and the `more` sentinel are dropped.
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      platform: 'reddit',
+      id: '1txzrc6',
+      author: 'mxsus',
+      community: 'ClaudeAI',
+      title: 'I built a local PDF-to-Markdown converter',
+      body: 'Body text',
+      engagement: { score: 536, comments: 12 }
+    });
+    expect(items[0].createdAt).toBe('2026-06-05T22:37:17.000Z');
+  });
+
   it('falls back to the Unix epoch when CLI timestamps are invalid', () => {
     expect(
       normalizeRedditPayload({ data: [{ id: 'bad-date', title: 'Bad', created_utc: 999999999999999 }] }, 'reddit')[0]

@@ -3,7 +3,11 @@ import { getBlockSpec } from '../shared/commandBuilders';
 import { accentForBlock, eyebrowForAccent, iconForBlock, summaryForBlock } from '../blockVisuals';
 import { Icon } from '../icons';
 import { portFrac } from '../canvasGeometry';
+import { normalizedFieldName, type FieldDescriptor } from '../shared/fieldSchema';
 import type { NodeIoPreview, NodeStatus, WorkbenchNode } from '../flowTypes';
+
+/** How many output-field chips the card shows before collapsing into a +N chip. */
+const MAX_FIELD_CHIPS = 4;
 
 interface NodeCardProps {
   node: WorkbenchNode;
@@ -12,6 +16,10 @@ interface NodeCardProps {
   onSelect: (id: string) => void;
   /** Per-node I/O from the latest run; when present the foot shows count badges. */
   preview?: NodeIoPreview;
+  /** This node's static output fields (design-time schema). */
+  outputFields?: FieldDescriptor[];
+  /** Union of upstream output fields available as inputs to this node. */
+  inputFields?: FieldDescriptor[];
 }
 
 const STATUS_LABEL: Record<NodeStatus, string> = {
@@ -22,7 +30,15 @@ const STATUS_LABEL: Record<NodeStatus, string> = {
   error: 'Error'
 };
 
-export function NodeCard({ node, isSelected, onMeasure, onSelect, preview }: NodeCardProps) {
+export function NodeCard({
+  node,
+  isSelected,
+  onMeasure,
+  onSelect,
+  preview,
+  outputFields = [],
+  inputFields = []
+}: NodeCardProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const spec = getBlockSpec(node.blockType);
   const accent = accentForBlock(spec.provider, spec.category);
@@ -32,6 +48,7 @@ export function NodeCard({ node, isSelected, onMeasure, onSelect, preview }: Nod
   const isSource = inN === 0;
   const isSink = outN === 0;
   const settingsKey = JSON.stringify(node.settings);
+  const liveFields = preview ? new Set(preview.normalizedFields) : null;
 
   useEffect(() => {
     const el = ref.current;
@@ -125,6 +142,33 @@ export function NodeCard({ node, isSelected, onMeasure, onSelect, preview }: Nod
               <span className={`fv ${item.accent ? 'accent' : ''}`}>{item.value || '—'}</span>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {outputFields.length > 0 ? (
+        <div className="node-io-fields" aria-label="Block fields">
+          {!isSource && inputFields.length > 0 ? (
+            <div className="nio-in" title={inputFields.map((field) => field.key).join(', ')}>
+              <span className="nio-label">in</span>
+              <span className="nio-count">{inputFields.length} available</span>
+            </div>
+          ) : null}
+          <div className="nio-out">
+            <span className="nio-label">out</span>
+            <span className="nio-chips">
+              {outputFields.slice(0, MAX_FIELD_CHIPS).map((field) => (
+                <span
+                  key={field.key}
+                  className={`nio-chip ${liveFields?.has(normalizedFieldName(field.key)) ? 'live' : ''}`}
+                >
+                  {field.label}
+                </span>
+              ))}
+              {outputFields.length > MAX_FIELD_CHIPS ? (
+                <span className="nio-chip nio-more">+{outputFields.length - MAX_FIELD_CHIPS}</span>
+              ) : null}
+            </span>
+          </div>
         </div>
       ) : null}
 

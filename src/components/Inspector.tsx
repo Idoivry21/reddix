@@ -1,5 +1,6 @@
 import { buildBlockCommand, getBlockSpec } from '../shared/commandBuilders';
-import { inputBindingMeta, inputBoundFieldKeys, type InputBindingMeta } from '../shared/inputBindings';
+import { inputBindingMeta, inputBoundFieldKeys, readBindings } from '../shared/inputBindings';
+import { normalizedFieldName, type FieldDescriptor } from '../shared/fieldSchema';
 import { isBlank } from '../shared/values';
 import { accentForBlock, iconForBlock } from '../blockVisuals';
 import { Icon } from '../icons';
@@ -55,6 +56,10 @@ interface InspectorProps {
   isRunning?: boolean;
   /** Latest per-node I/O for the last-run panel. */
   preview?: NodeIoPreview;
+  /** Upstream output fields available as inputs to this node (for panels + binding picker). */
+  inputFields?: FieldDescriptor[];
+  /** This node's static output fields (design-time schema). */
+  outputFields?: FieldDescriptor[];
   readOnly?: boolean;
 }
 
@@ -68,6 +73,8 @@ export function Inspector({
   hasCachedUpstream = false,
   isRunning = false,
   preview,
+  inputFields = [],
+  outputFields = [],
   readOnly = false
 }: InspectorProps) {
   if (!node) {
@@ -97,6 +104,34 @@ export function Inspector({
   const boundKeys = inputBoundFieldKeys(node.blockType);
   const bindingMeta = inputBindingMeta(node.blockType);
   const bindPolicy = bindPolicyOf(node.settings);
+  // Only CLI-backed blocks resolve field bindings at run time, so the mapping
+  // picker is offered for those alone (a transform consumes the whole stream).
+  const canMap = Boolean(spec.executable);
+  const userBindings = readBindings(node.settings);
+  const upstreamLabel = (key: string): string => inputFields.find((field) => field.key === key)?.label ?? key;
+  const fieldLabel = (key: string): string => spec.fields.find((field) => field.key === key)?.label ?? key;
+  // Mapper rows: explicit user bindings (removable) plus any default bindings the
+  // user has not overridden (read-only) so the overview shows the full picture.
+  const mapperRows: BindingRow[] = [];
+  const mappedFieldKeys = new Set<string>();
+  for (const [fieldKey, sourceKey] of Object.entries(userBindings)) {
+    mapperRows.push({ fieldKey, label: fieldLabel(fieldKey), sourceLabel: upstreamLabel(sourceKey), removable: true });
+    mappedFieldKeys.add(fieldKey);
+  }
+  for (const meta of bindingMeta) {
+    if (!mappedFieldKeys.has(meta.fieldKey)) {
+      mapperRows.push({ ...meta, removable: false });
+    }
+  }
+  const setBinding = (fieldKey: string, upstreamKey: string | null): void => {
+    const next = { ...userBindings };
+    if (upstreamKey) {
+      next[fieldKey] = upstreamKey;
+    } else {
+      delete next[fieldKey];
+    }
+    onSettingChange('__bindings', next);
+  };
   let command: BuiltCommand | null = null;
   if (spec.executable) {
     try {
@@ -121,6 +156,8 @@ export function Inspector({
         </div>
       </div>
       <div className="inspector-scroll">
+        {hasUpstream && inputFields.length > 0 ? <InputsPanel fields={inputFields} /> : null}
+
         {fields.length === 0 ? (
           <div className="field-hint" style={{ marginTop: 16 }}>
             This block has no settings — it just forwards what it receives.
@@ -134,15 +171,19 @@ export function Inspector({
             onChange={(value) => onSettingChange(field.key, value)}
             disabled={readOnly}
             isInputBound={boundKeys.includes(field.key)}
+            bindableFields={canMap && hasUpstream ? inputFields : undefined}
+            boundTo={userBindings[field.key]}
+            onBind={canMap && !readOnly ? (upstreamKey) => setBinding(field.key, upstreamKey) : undefined}
           />
         ))}
 
-        {hasUpstream && bindingMeta.length > 0 ? (
+        {hasUpstream && mapperRows.length > 0 ? (
           <BindingMapper
-            bindings={bindingMeta}
+            rows={mapperRows}
             policy={bindPolicy}
             disabled={readOnly}
             onPolicyChange={(value) => onSettingChange('__bindPolicy', value)}
+            onUnbind={readOnly ? undefined : (fieldKey) => setBinding(fieldKey, null)}
           />
         ) : null}
 
@@ -156,7 +197,7 @@ export function Inspector({
           />
         ) : null}
 
-        {preview ? <LastRunPanel preview={preview} /> : null}
+        <OutputsPanel fields={outputFields} preview={preview} />
 
         {!readOnly ? (
           <div className="field-actions">
@@ -220,13 +261,35 @@ interface FieldProps {
   value: unknown;
   onChange: (value: unknown) => void;
   disabled?: boolean;
-  /** True when this field can be filled from an upstream node's output. */
+  /** True when this field can be filled from an upstream node's output (default binding). */
   isInputBound?: boolean;
+  /** Upstream fields this field can be explicitly mapped to (CLI nodes with upstream). */
+  bindableFields?: FieldDescriptor[];
+  /** The upstream field key this field is currently bound to, if any. */
+  boundTo?: string;
+  /** Bind (or, with null, unbind) this field to an upstream output field. */
+  onBind?: (upstreamKey: string | null) => void;
 }
 
-function Field({ field, value, onChange, disabled = false, isInputBound = false }: FieldProps) {
+function Field({
+  field,
+  value,
+  onChange,
+  disabled = false,
+  isInputBound = false,
+  bindableFields,
+  boundTo,
+  onBind
+}: FieldProps) {
   const fieldId = `field-${field.key}`;
-  const showUpstreamHint = isInputBound && isBlank(value);
+  const isBound = Boolean(boundTo);
+  const inputDisabled = disabled || isBound;
+  const showUpstreamHint = isInputBound && isBlank(value) && !isBound;
+  const canPickBinding =
+    Boolean(onBind) &&
+    Boolean(bindableFields && bindableFields.length > 0) &&
+    (field.type === 'text' || field.type === 'path');
+  const boundLabel = bindableFields?.find((entry) => entry.key === boundTo)?.label ?? boundTo;
   return (
     <div className="field">
       <label className="field-label" id={`${fieldId}-label`} htmlFor={fieldId}>
@@ -237,7 +300,7 @@ function Field({ field, value, onChange, disabled = false, isInputBound = false 
           id={fieldId}
           className="select"
           value={String(value ?? '')}
-          disabled={disabled}
+          disabled={inputDisabled}
           onChange={(event) => onChange(event.target.value)}
         >
           {(field.options ?? []).map((option) => (
@@ -252,7 +315,7 @@ function Field({ field, value, onChange, disabled = false, isInputBound = false 
             type="button"
             className={value ? '' : 'on'}
             aria-pressed={!value}
-            disabled={disabled}
+            disabled={inputDisabled}
             onClick={() => onChange(false)}
           >
             no
@@ -261,7 +324,7 @@ function Field({ field, value, onChange, disabled = false, isInputBound = false 
             type="button"
             className={value ? 'on' : ''}
             aria-pressed={Boolean(value)}
-            disabled={disabled}
+            disabled={inputDisabled}
             onClick={() => onChange(true)}
           >
             yes
@@ -276,7 +339,7 @@ function Field({ field, value, onChange, disabled = false, isInputBound = false 
           min={field.min}
           max={field.max}
           value={value === undefined || value === null || value === '' ? '' : Number(value)}
-          disabled={disabled}
+          disabled={inputDisabled}
           onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))}
         />
       ) : (
@@ -285,10 +348,47 @@ function Field({ field, value, onChange, disabled = false, isInputBound = false 
           className={`input ${field.type === 'path' ? 'mono' : ''}`}
           type="text"
           value={String(value ?? '')}
-          disabled={disabled}
+          disabled={inputDisabled}
           onChange={(event) => onChange(event.target.value)}
         />
       )}
+      {isBound ? (
+        <div className="field-bound">
+          <span className="bind-arrow" aria-hidden="true">←</span>
+          <code className="bind-chip">upstream.{boundLabel}</code>
+          {onBind && !disabled ? (
+            <button
+              type="button"
+              className="bind-clear"
+              aria-label={`Unbind ${field.label}`}
+              onClick={() => onBind(null)}
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      ) : canPickBinding ? (
+        <div className="field-bind">
+          <select
+            className="select select-sm"
+            aria-label={`Map ${field.label} from upstream`}
+            value=""
+            disabled={disabled}
+            onChange={(event) => {
+              if (event.target.value) {
+                onBind?.(event.target.value);
+              }
+            }}
+          >
+            <option value="">map from upstream…</option>
+            {bindableFields?.map((entry) => (
+              <option key={entry.key} value={entry.key}>
+                {entry.label} ({entry.key})
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       {showUpstreamHint ? (
         <p className="field-hint">
           Leave blank to pull from upstream — runs once per item from a wired source.
@@ -341,25 +441,44 @@ function RunNodeButtons({ hasCachedUpstream, isRunning, onRun }: RunNodeButtonsP
   );
 }
 
+interface BindingRow {
+  fieldKey: string;
+  label: string;
+  sourceLabel: string;
+  /** User-created bindings can be cleared; built-in default bindings cannot. */
+  removable?: boolean;
+}
+
 interface BindingMapperProps {
-  bindings: InputBindingMeta[];
+  rows: BindingRow[];
   policy: BindPolicy;
   disabled: boolean;
   onPolicyChange: (policy: BindPolicy) => void;
+  onUnbind?: (fieldKey: string) => void;
 }
 
-function BindingMapper({ bindings, policy, disabled, onPolicyChange }: BindingMapperProps) {
+function BindingMapper({ rows, policy, disabled, onPolicyChange, onUnbind }: BindingMapperProps) {
   return (
     <div className="bind-mapper">
       <div className="cmd-label">upstream binding</div>
       <ul className="bind-rows">
-        {bindings.map((binding) => (
+        {rows.map((binding) => (
           <li className="bind-row" key={binding.fieldKey}>
             <span className="bind-target">{binding.label}</span>
             <span className="bind-arrow" aria-hidden="true">←</span>
             <span className="bind-source">
               upstream <code>{binding.sourceLabel}</code>
             </span>
+            {binding.removable && onUnbind ? (
+              <button
+                type="button"
+                className="bind-clear"
+                aria-label={`Unbind ${binding.label}`}
+                onClick={() => onUnbind(binding.fieldKey)}
+              >
+                ×
+              </button>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -388,6 +507,50 @@ function BindingMapper({ bindings, policy, disabled, onPolicyChange }: BindingMa
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function InputsPanel({ fields }: { fields: FieldDescriptor[] }) {
+  return (
+    <div className="io-panel inputs-panel">
+      <div className="cmd-label">available inputs</div>
+      <ul className="io-rows">
+        {fields.map((field) => (
+          <li className="io-row" key={field.key}>
+            <span className="io-key">{field.key}</span>
+            <span className="io-type">{field.type}</span>
+            {field.platform !== 'both' ? <span className="io-plat">{field.platform}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function OutputsPanel({ fields, preview }: { fields: FieldDescriptor[]; preview?: NodeIoPreview }) {
+  if (fields.length === 0 && !preview) {
+    return null;
+  }
+  const live = preview ? new Set(preview.normalizedFields) : null;
+  return (
+    <div className="io-panel outputs-panel">
+      <div className="cmd-label">outputs</div>
+      {fields.length > 0 ? (
+        <ul className="io-rows">
+          {fields.map((field) => {
+            const isLive = Boolean(live?.has(normalizedFieldName(field.key)));
+            return (
+              <li className={`io-row ${isLive ? 'live' : ''}`} key={field.key}>
+                <span className="io-key">{field.key}</span>
+                <span className="io-type">{field.type}</span>
+                {isLive ? <span className="io-live-dot" aria-label="present in last run" /> : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {preview ? <LastRunPanel preview={preview} /> : null}
     </div>
   );
 }

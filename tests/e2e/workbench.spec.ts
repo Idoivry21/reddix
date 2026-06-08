@@ -60,6 +60,21 @@ test('runs a flow, shows live steps, and surfaces the error state', async ({ pag
   await expect(page.getByText(/Step 1:/i)).toBeVisible();
 });
 
+test('surfaces upstream input fields and output chips on wired nodes', async ({ page }, testInfo) => {
+  test.skip(isMobile(testInfo.project.name), 'inspector authoring is exercised on desktop');
+  await page.goto('/');
+
+  // A source node advertises its output fields as chips on the canvas card.
+  const source = page.locator('[data-role="node"]').filter({ hasText: 'Search Reddit' });
+  await expect(source.locator('.nio-chip').first()).toBeVisible();
+
+  // Selecting a wired transform shows the upstream fields it can consume.
+  await page.locator('[data-role="node"]').filter({ hasText: 'Filter Text' }).click();
+  const inspector = page.getByRole('complementary', { name: 'Inspector' });
+  await expect(inspector.getByText('available inputs')).toBeVisible();
+  await expect(inspector.locator('.inputs-panel').getByText('title', { exact: true })).toBeVisible();
+});
+
 test('enforces read-only authoring on mobile', async ({ page }, testInfo) => {
   test.skip(!isMobile(testInfo.project.name), 'mobile-only enforcement check');
   await page.goto('/');

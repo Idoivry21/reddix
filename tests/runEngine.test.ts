@@ -329,6 +329,36 @@ describe('run engine', () => {
     expect(detailIds).toEqual(['dup']);
   });
 
+  it('fans out using a user binding that overrides the default source field', async () => {
+    const flow = tweetDetailFanOutFlow(['111', '222', '333']);
+    // Override the default tweetIdOrUrl←id binding with a user binding to author.
+    flow.nodes = flow.nodes.map((node) =>
+      node.id === 'detail'
+        ? { ...node, settings: { ...node.settings, __bindings: { tweetIdOrUrl: 'author' } } }
+        : node
+    );
+
+    const detailArgs: string[] = [];
+    const result = await runFlow({
+      flow,
+      executor: async (command) => {
+        if (command.argv[0] === 'search') {
+          // All three results share author 'public_cli' (see searchStdout).
+          return { stdout: searchStdout(['111', '222', '333']), stderr: '', exitCode: 0 };
+        }
+        detailArgs.push(command.argv[1]);
+        return { stdout: detailStdout(command.argv[1]), stderr: '', exitCode: 0 };
+      },
+      writeArtifact: async (filePath, contents) => ({ path: filePath, bytes: contents.length }),
+      now: () => new Date('2026-06-01T10:00:00Z')
+    });
+
+    expect(result.status).toBe('success');
+    // The user binding resolved every item to the same author, so dedup collapses
+    // three upstream items into a single fan-out call.
+    expect(detailArgs).toEqual(['public_cli']);
+  });
+
   it('continues the fan-out when one item fails and keeps the rest', async () => {
     const result = await runFlow({
       flow: tweetDetailFanOutFlow(['ok1', 'bad', 'ok2']),

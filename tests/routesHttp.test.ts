@@ -88,6 +88,10 @@ function putFlow(base: string, id: string, body: unknown): Promise<Response> {
   });
 }
 
+function deleteFlow(base: string, id: string): Promise<Response> {
+  return fetch(`${base}/api/flows/${id}`, { method: 'DELETE' });
+}
+
 function postRuns(base: string, body: unknown): Promise<Response> {
   return fetch(`${base}/api/runs`, {
     method: 'POST',
@@ -162,6 +166,32 @@ describe('PUT /api/flows/:flowId', () => {
     });
     expect(response.status).toBe(400);
     expect((await response.json() as { code: string }).code).toBe('INVALID_FLOW_GRAPH');
+  });
+});
+
+describe('DELETE /api/flows/:flowId', () => {
+  it('returns 400 INVALID_FLOW_ID for a path-unsafe id', async () => {
+    const base = await start();
+    const response = await deleteFlow(base, '.hidden');
+    expect(response.status).toBe(400);
+    expect((await response.json() as { code: string }).code).toBe('INVALID_FLOW_ID');
+  });
+
+  it('returns 404 for a safe but nonexistent id', async () => {
+    const base = await start();
+    const response = await deleteFlow(base, 'nonexistent-flow');
+    expect(response.status).toBe(404);
+  });
+
+  it('removes a saved flow: 204, then the flow reads back as 404', async () => {
+    const base = await start();
+    expect((await putFlow(base, 'flow-1', validFlowBody())).status).toBe(200);
+
+    const deleteResponse = await deleteFlow(base, 'flow-1');
+    expect(deleteResponse.status).toBe(204);
+
+    expect((await fetch(`${base}/api/flows/flow-1`)).status).toBe(404);
+    expect(await (await fetch(`${base}/api/flows`)).json()).toEqual({ flows: [] });
   });
 });
 

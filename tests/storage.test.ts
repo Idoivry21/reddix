@@ -44,6 +44,7 @@ describe('local JSON storage', () => {
       await expect(storage.listRuns(id)).rejects.toThrow(/invalid id/i);
       await expect(storage.saveFlow(flow(id))).rejects.toThrow(/invalid id/i);
       await expect(storage.appendRun(run('r', id))).rejects.toThrow(/invalid id/i);
+      await expect(storage.deleteFlow(id)).rejects.toThrow(/invalid id/i);
     }
 
     // No artifact may exist anywhere under the temp root outside the data dir.
@@ -130,6 +131,38 @@ describe('local JSON storage', () => {
 
     await expect(storage.getFlow('broken')).resolves.toBeNull();
     await expect(storage.listFlows()).resolves.toEqual([]);
+  });
+
+  it('deletes a flow and its run history, reporting whether it existed', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const storage = createStorage({ baseDir: dir });
+    await storage.saveFlow(flow('flow-1'));
+    await storage.appendRun(run('r1', 'flow-1'));
+
+    expect(await storage.deleteFlow('flow-1')).toBe(true);
+    expect(await storage.getFlow('flow-1')).toBeNull();
+    // Run history is dropped with the flow, not orphaned under runs/.
+    expect(await storage.listRuns('flow-1')).toEqual([]);
+    await expect(readdir(path.join(dir, 'runs'))).resolves.not.toContain('flow-1.json');
+  });
+
+  it('treats deleting a nonexistent flow as a no-op returning false', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const storage = createStorage({ baseDir: dir });
+    expect(await storage.deleteFlow('never-saved')).toBe(false);
+  });
+
+  it('does not disturb other flows when deleting one', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const storage = createStorage({ baseDir: dir });
+    await storage.saveFlow(flow('flow-1'));
+    await storage.saveFlow(flow('flow-2'));
+    await storage.appendRun(run('keep', 'flow-2'));
+
+    await storage.deleteFlow('flow-1');
+
+    expect(await storage.getFlow('flow-2')).toEqual(flow('flow-2'));
+    expect((await storage.listRuns('flow-2')).map((record) => record.id)).toEqual(['keep']);
   });
 
   it('migrates schema-less preferences on load', async () => {

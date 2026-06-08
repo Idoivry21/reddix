@@ -1,5 +1,6 @@
 import { getBlockSpec, validateBlockSettings } from './commandBuilders';
-import { inputBoundFieldKeys } from './inputBindings';
+import { availableInputFields } from './fieldSchema';
+import { boundFieldKeys, readBindings } from './inputBindings';
 import type { BlockSpec } from './types';
 import type { PortSpec } from './types';
 
@@ -63,7 +64,9 @@ export function validateFlow(flow: FlowModel): { valid: boolean; errors: Validat
       continue;
     }
     specsByNodeId.set(node.id, spec);
-    const optionalRequiredFields = hasIncomingInput.has(node.id) ? inputBoundFieldKeys(node.type) : [];
+    const optionalRequiredFields = hasIncomingInput.has(node.id)
+      ? boundFieldKeys(node.type, node.settings)
+      : [];
     for (const message of validateBlockSettings(node.type, node.settings, {
       enforceRequired: true,
       rejectFlagLikeStrings: true,
@@ -101,6 +104,26 @@ export function validateFlow(flow: FlowModel): { valid: boolean; errors: Validat
   for (const outputNode of flow.nodes.filter((node) => specsByNodeId.get(node.id)?.category === 'Output')) {
     if (!isReachableFromSource(outputNode.id, flow, nodesById, specsByNodeId)) {
       errors.push({ nodeId: outputNode.id, message: 'Output block is not reachable from a source' });
+    }
+  }
+
+  // Dangling user bindings: a field mapped to an upstream key that no upstream
+  // node actually provides would silently drop every item at run time, so flag
+  // it as an error rather than letting it fail quietly.
+  for (const node of flow.nodes) {
+    const bindings = readBindings(node.settings);
+    const sourceKeys = Object.values(bindings);
+    if (sourceKeys.length === 0) {
+      continue;
+    }
+    const available = new Set(availableInputFields(node.id, flow.nodes, flow.edges).map((field) => field.key));
+    for (const [fieldKey, sourceKey] of Object.entries(bindings)) {
+      if (!available.has(sourceKey)) {
+        errors.push({
+          nodeId: node.id,
+          message: `Field "${fieldKey}" is bound to "${sourceKey}", which no upstream node provides`
+        });
+      }
     }
   }
 

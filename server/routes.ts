@@ -304,6 +304,21 @@ export function createRoutes(options: RoutesOptions) {
     response.json({ flow });
   });
 
+  router.delete('/flows/:flowId', async (request, response) => {
+    if (!ensureSafeFlowId(request, response)) {
+      return;
+    }
+    const existed = await options.storage.deleteFlow(request.params.flowId);
+    if (!existed) {
+      response.status(404).json({ error: 'Flow not found' });
+      return;
+    }
+    // Drop any registered schedule so a deleted flow never fires again.
+    scheduler.unregister(request.params.flowId);
+    logger?.info('flow.deleted', { flowId: request.params.flowId });
+    response.status(204).end();
+  });
+
   router.get('/runs/:flowId', async (request, response) => {
     if (!ensureSafeFlowId(request, response)) {
       return;
