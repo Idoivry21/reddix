@@ -76,6 +76,24 @@ describe('createErrorHandler', () => {
     expect(fields).toMatchObject({ path: '/api/runs', detail: 'boom detail' });
   });
 
+  it('logs the server-side stack without exposing it to the client', () => {
+    const logger = mockLogger();
+    const response = mockResponse();
+    const error = new Error('boom detail');
+    error.stack = 'Error: boom detail\n    at routeHandler (server/routes.ts:1:1)';
+
+    createErrorHandler(logger)(
+      error,
+      { path: '/api/runs' } as Request,
+      response,
+      vi.fn() as unknown as NextFunction
+    );
+
+    const fields = logger.error.mock.calls[0][1] as { stack?: string };
+    expect(fields.stack).toContain('routeHandler');
+    expect(JSON.stringify(response.jsonBody)).not.toContain('routeHandler');
+  });
+
   it('correlates the client requestId with the logged requestId', () => {
     const logger = mockLogger();
     const response = mockResponse();

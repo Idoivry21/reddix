@@ -52,6 +52,7 @@ interface RunFlowOptions {
 }
 
 export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
+  const runId = nanoid();
   const now = options.now ?? (() => new Date());
   const secrets = options.secrets ?? {};
   const logger = options.logger;
@@ -63,16 +64,20 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   const validation = validateFlow(options.flow);
   if (!validation.valid) {
     logger?.warn('flow.invalid', {
+      runId,
       flowId,
       errors: validation.errors.length
     });
     metrics.increment('flow_runs_total', { status: 'failed' });
-    return makeTerminalRun({
-      flowId: options.flow.id,
-      status: 'failed',
-      error: validation.errors.map((error) => error.message).join('; '),
-      now
-    });
+    return {
+      ...makeTerminalRun({
+        flowId: options.flow.id,
+        status: 'failed',
+        error: validation.errors.map((error) => error.message).join('; '),
+        now
+      }),
+      id: runId
+    };
   }
 
   const nodes = topologicalNodes(options.flow);
@@ -90,7 +95,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   let failed = false;
 
   const flowStart = now().getTime();
-  logger?.info('flow.start', { flowId, nodeCount: nodes.length });
+  logger?.info('flow.start', { runId, flowId, nodeCount: nodes.length });
 
   // Single place that records a step: pushes it, streams it over SSE, and logs
   // structural fields only (never stderr/error/argv content, which may carry a
@@ -99,6 +104,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     steps.push(step);
     options.emit?.({ type: 'step', step });
     logger?.info('flow.step', {
+      runId,
       flowId,
       blockId: step.blockId,
       type: nodeType,
@@ -190,18 +196,22 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
       recordStep(step, node.type);
     } catch (error) {
       failed = true;
+      const detail = redact(error instanceof Error ? error.message : String(error));
+      const stack = error instanceof Error && error.stack ? redact(error.stack) : null;
       // The error message lands in the step record; the log adds the operation
       // class so a thrown transform/export/parse error is not an anonymous 500.
       logger?.error('flow.stepError', {
+        runId,
         flowId,
         blockId: node.id,
         type: node.type,
         operation: operationOf(node),
-        detail: redact(error instanceof Error ? error.message : String(error))
+        detail,
+        stack
       });
       const step = makeStep(node.id, 'failed', now, {
         startedAt: stepStarted,
-        error: redact(error instanceof Error ? error.message : String(error))
+        error: detail
       });
       recordStep(step, node.type);
       markDownstreamBlocked(node.id, edgesBySource, blocked);
@@ -242,6 +252,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   metrics.increment('flow_runs_total', { status });
   metrics.observe('flow_duration_ms', durationMs, { status });
   logger?.info('flow.end', {
+    runId,
     flowId,
     status,
     durationMs,
@@ -253,7 +264,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
 
   return {
     schemaVersion: 1,
-    id: nanoid(),
+    id: runId,
     flowId: options.flow.id,
     status,
     startedAt,

@@ -76,6 +76,11 @@ interface HealthSnapshot {
   };
 }
 
+interface DataDirWritableProbe {
+  writable: boolean;
+  errno?: string;
+}
+
 export function createRoutes(options: RoutesOptions) {
   const router = express.Router();
   const logger = options.logger;
@@ -457,10 +462,14 @@ export function createRoutes(options: RoutesOptions) {
     // `ok` reflects SERVER health — can the app persist runs? Missing CLI
     // binaries are a normal, separately-reported state (the app's job is to
     // detect and report them), not a server outage, so they do not flip `ok`.
-    const storageWritable = await isDataDirWritable(options.dataDir);
+    const storage = await isDataDirWritable(options.dataDir);
+    const storageWritable = storage.writable;
     const ok = storageWritable;
     if (!ok) {
-      logger?.error('health.degraded', { storageWritable });
+      logger?.error('health.degraded', {
+        storageWritable,
+        ...(storage.errno ? { errno: storage.errno } : {})
+      });
     }
     return {
       statusCode: ok ? 200 : 503,
@@ -481,14 +490,19 @@ export function createRoutes(options: RoutesOptions) {
  * data dir (the thing that actually fails runs) is reported, not masked behind
  * a hardcoded ok:true.
  */
-async function isDataDirWritable(dataDir: string): Promise<boolean> {
+async function isDataDirWritable(dataDir: string): Promise<DataDirWritableProbe> {
   try {
     await mkdir(dataDir, { recursive: true });
     await access(dataDir, constants.W_OK);
-    return true;
-  } catch {
-    return false;
+    return { writable: true };
+  } catch (error) {
+    return { writable: false, ...errorCodeField(error) };
   }
+}
+
+function errorCodeField(error: unknown): Pick<DataDirWritableProbe, 'errno'> {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === 'string' ? { errno: code } : {};
 }
 
 /** Unique CLI providers a flow touches, derived from its node types. */

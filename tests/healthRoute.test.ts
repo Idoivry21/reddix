@@ -21,6 +21,15 @@ afterEach(async () => {
 
 type AppOptions = Partial<Parameters<typeof createApp>[0]>;
 
+function mockAppLogger(): NonNullable<AppOptions['logger']> {
+  return {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    requestLogger: () => (_request: unknown, _response: unknown, next: () => void) => next()
+  } as unknown as NonNullable<AppOptions['logger']>;
+}
+
 async function start(dataDir: string, options: AppOptions = {}): Promise<string> {
   const { app } = createApp({
     storage: createStorage({ baseDir: dataDir }),
@@ -76,6 +85,31 @@ describe('GET /api/health (finding 5)', () => {
     expect(response.status).toBe(503);
     expect(body.ok).toBe(false);
     expect(body.storage.writable).toBe(false);
+  });
+
+  it('logs the storage errno on degraded health without leaking it in the response body', async () => {
+    // A regular file stands where the data dir should be -> mkdir/access fail.
+    const root = await mkdtemp(path.join(tmpdir(), 'reddix-health-'));
+    const filePath = path.join(root, 'not-a-dir');
+    await writeFile(filePath, 'x');
+    const dataDir = path.join(filePath, 'data');
+    const logger = mockAppLogger();
+    const errorMock = logger.error as ReturnType<typeof vi.fn>;
+    const base = await start(dataDir, { logger });
+
+    const response = await fetch(`${base}/api/health`);
+    const body = (await response.json()) as { ok: boolean; storage: { writable: boolean; errno?: string } };
+
+    expect(response.status).toBe(503);
+    expect(logger.error).toHaveBeenCalledWith(
+      'health.degraded',
+      expect.objectContaining({ storageWritable: false, errno: expect.any(String) })
+    );
+    const degradedCall = errorMock.mock.calls.find(([message]) => message === 'health.degraded');
+    expect(degradedCall).toBeDefined();
+    const errno = (degradedCall![1] as { errno: string }).errno;
+    expect(body.storage).toEqual({ writable: false });
+    expect(JSON.stringify(body)).not.toContain(errno);
   });
 
   it('dedupes concurrent provider probes and reuses the cached health snapshot', async () => {

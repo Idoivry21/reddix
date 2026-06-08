@@ -115,6 +115,8 @@ export function spawnCapped(
       }
     };
 
+    child.stdout.on('error', () => undefined);
+    child.stderr.on('error', () => undefined);
     child.stdout.on('data', (chunk) => {
       stdout.append(stdoutDecoder.write(chunk));
       killIfOver();

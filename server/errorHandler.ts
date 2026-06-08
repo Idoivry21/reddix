@@ -17,10 +17,12 @@ export function createErrorHandler(logger: Pick<EventLogger, 'error'>): ErrorReq
     // Correlate the client-facing 500 with the server log via a request id, so a
     // user/support ticket can point straight at the matching log entry.
     const requestId = nanoid();
+    const stack = error instanceof Error && error.stack ? error.stack : undefined;
     logger.error('request error', {
       requestId,
       path: request.path,
-      detail: error instanceof Error ? error.message : String(error)
+      detail: error instanceof Error ? error.message : String(error),
+      ...(stack ? { stack } : {})
     });
     response.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR', requestId });
   };
