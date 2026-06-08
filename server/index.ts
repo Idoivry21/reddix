@@ -6,6 +6,7 @@ import { killAllCliChildren } from './executor';
 import { createLogger } from './logger';
 import { createMetrics } from './metrics';
 import { closeServer } from './serverLifecycle';
+import { createShutdown, formatFatalReason, registerFatalSignalHandlers } from './shutdown';
 import { createStorage } from './storage';
 
 /** Hard-kill the process if a graceful shutdown stalls past this window. */
@@ -35,47 +36,28 @@ const host = process.env.HOST ?? '127.0.0.1';
 const server = app.listen(port, host, () => {
   console.log(`Reddix backend listening on http://${host}:${port}`);
 });
+const redactFatal = (message: string): string => redactSecrets(message, fatalLogSecrets);
+
+const { shutdown, isShuttingDown } = createShutdown({
+  server,
+  closeClients,
+  killChildren: killAllCliChildren,
+  closeServer,
+  exit: (code) => process.exit(code),
+  log: (message) => console.log(message),
+  forceExitMs: SHUTDOWN_FORCE_EXIT_MS
+});
+
 server.on('error', (error) => {
-  if (shuttingDown) {
+  if (isShuttingDown()) {
     return;
   }
-  console.error('[reddix] server error:', formatFatalReason(error));
+  console.error('[reddix] server error:', formatFatalReason(error, redactFatal));
   shutdown('server error', 1);
 });
 
-let shuttingDown = false;
-
-function shutdown(reason: string, exitCode = 0): void {
-  if (shuttingDown) {
-    return;
-  }
-  shuttingDown = true;
-  console.log(`[reddix] shutting down (${reason})`);
-  closeClients();
-  killAllCliChildren('SIGTERM');
-  closeServer(server, () => {
-    process.exit(exitCode);
-  });
-  // Failsafe: force exit if the server does not close in time.
-  const timer = setTimeout(() => process.exit(exitCode), SHUTDOWN_FORCE_EXIT_MS);
-  timer.unref();
-}
-
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-process.on('uncaughtException', (error) => {
-  console.error('[reddix] uncaughtException:', formatFatalReason(error));
-  shutdown('uncaughtException', 1);
+registerFatalSignalHandlers(process, {
+  shutdown,
+  formatFatalReason: (reason) => formatFatalReason(reason, redactFatal),
+  errorLog: (message) => console.error(message)
 });
-
-process.on('unhandledRejection', (reason) => {
-  console.error('[reddix] unhandledRejection:', formatFatalReason(reason));
-  shutdown('unhandledRejection', 1);
-});
-
-function formatFatalReason(reason: unknown): string {
-  const message =
-    reason instanceof Error ? reason.stack ?? reason.message : typeof reason === 'string' ? reason : String(reason);
-  return redactSecrets(message, fatalLogSecrets);
-}

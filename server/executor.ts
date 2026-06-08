@@ -23,7 +23,7 @@ const activeCliChildren = new Set<ChildProcess>();
  * needed to locate the binary plus the allowlisted auth vars the CLI consumes.
  * Empty/undefined values are dropped so we never override a real value with ''.
  */
-function buildCliEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildCliEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const passthroughKeys = ['PATH', 'HOME', 'TMPDIR', ...AUTH_ENV_KEYS];
   return passthroughKeys.reduce<NodeJS.ProcessEnv>((next, key) => {
     const value = env[key];
