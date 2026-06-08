@@ -21,7 +21,13 @@ const csvColumns = [
 ] as const;
 
 export function serializeJson(items: SocialItem[], pretty: boolean): string {
-  return JSON.stringify(items, null, pretty ? 2 : 0);
+  // Exports depend only on the normalized SocialItem shape. The untrusted `raw`
+  // CLI payload is deliberately excluded: it would (a) let a token a hostile/buggy
+  // CLI echoes back into its --json output land in a served artifact unredacted,
+  // and (b) bloat exports with the entire upstream blob. CSV/Markdown already pull
+  // only named fields; JSON is the only serializer that would otherwise emit `raw`.
+  const exportItems = items.map(({ raw: _raw, ...rest }) => rest);
+  return JSON.stringify(exportItems, null, pretty ? 2 : 0);
 }
 
 export function serializeCsv(items: SocialItem[]): string {
@@ -101,8 +107,10 @@ function csvCell(value: unknown): string {
   }
   const raw = String(value);
   // CSV formula-injection guard: spreadsheets (Excel/Sheets) execute a cell that
-  // begins with = + - @ (or a tab/CR variant). Prefix such cells with ' to neutralize.
-  const text = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  // begins with = + - @ (or a tab/CR variant). A leading space or newline is also
+  // dangerous: some importers trim/normalize leading whitespace before evaluating,
+  // re-exposing a formula like " =cmd". Prefix any such cell with ' to neutralize.
+  const text = /^[=+\-@\t\r\n ]/.test(raw) ? `'${raw}` : raw;
   if (/[",\n]/.test(text)) {
     return `"${text.replace(/"/g, '""')}"`;
   }

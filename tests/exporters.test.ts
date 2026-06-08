@@ -29,6 +29,21 @@ describe('exporters', () => {
     expect(serializeJson([item], true)).toContain('"platform": "reddit"');
   });
 
+  it('omits the untrusted raw CLI payload from JSON exports', () => {
+    const secretInRaw: SocialItem = {
+      ...item,
+      raw: { id: 'abc', echoed_token: 'TWITTER_AUTH_TOKEN_VALUE', headers: { auth: 'secret' } }
+    };
+    const json = serializeJson([secretInRaw], false);
+
+    expect(json).not.toContain('raw');
+    expect(json).not.toContain('echoed_token');
+    expect(json).not.toContain('TWITTER_AUTH_TOKEN_VALUE');
+    // Normalized fields still serialize.
+    expect(JSON.parse(json)[0].id).toBe('abc');
+    expect(JSON.parse(json)[0].raw).toBeUndefined();
+  });
+
   it('serializes CSV with stable columns and escaping', () => {
     expect(serializeCsv([item])).toBe(
       'platform,id,createdAt,author,community,title,body,url,score,comments,replies,likes,retweets,bookmarks,views\nreddit,abc,2026-06-01T10:00:00.000Z,devops_dave,localdev,CLI tools,Automate local exports,https://reddit.com/r/localdev/comments/abc/test,42,7,,,,,\n'
@@ -41,6 +56,15 @@ describe('exporters', () => {
     expect(csv).toContain('\'=HYPERLINK');
     expect(csv).toContain("\"'+SUM");
     expect(csv).not.toContain('\nreddit,abc,2026-06-01T10:00:00.000Z,devops_dave,localdev,=HYPERLINK');
+  });
+
+  it('neutralizes formula cells that lead with whitespace or a newline', () => {
+    // Leading space: some importers trim then evaluate, re-exposing the formula.
+    const leadingSpace = serializeCsv([{ ...item, title: ' =cmd|calc' }]);
+    expect(leadingSpace).toContain("' =cmd|calc");
+    // Leading newline: the cell is quoted AND prefixed, so it can't start a formula.
+    const leadingNewline = serializeCsv([{ ...item, body: '\n=SUM(A1)' }]);
+    expect(leadingNewline).toContain("\"'\n=SUM(A1)\"");
   });
 
   it('serializes Markdown grouped by platform', () => {

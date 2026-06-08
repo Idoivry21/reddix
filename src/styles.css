@@ -1301,6 +1301,111 @@ textarea:focus-visible,
   color: var(--ink-900);
   box-shadow: var(--shadow-xs);
 }
+/* ---- behavior panel (what + how) ---- */
+.behavior-panel {
+  margin-top: 14px;
+}
+.behavior-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.behavior-toggle:hover {
+  background: var(--surface-3);
+}
+.effect-badge {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  /* Mix the block accent toward the foreground ink so the small uppercase label
+     clears WCAG AA on its wash; ink-900 flips per theme, so this darkens on
+     light and lightens on dark automatically. */
+  color: color-mix(in srgb, var(--badge-accent) 50%, var(--ink-900));
+  background: var(--badge-wash);
+  border: 1px solid color-mix(in srgb, var(--badge-accent) 35%, transparent);
+}
+/* Badge color follows the block's own provider/category accent (matching the
+   Inspector header icon), not the effect — so a Reddit source never reads in
+   X-blue. The effect itself is carried by the badge text. */
+.badge-reddit {
+  --badge-accent: var(--cat-reddit);
+  --badge-wash: var(--cat-reddit-wash);
+}
+.badge-x {
+  --badge-accent: var(--cat-x);
+  --badge-wash: var(--cat-x-wash);
+}
+.badge-transform {
+  --badge-accent: var(--cat-transform);
+  --badge-wash: var(--cat-transform-wash);
+}
+.badge-output {
+  --badge-accent: var(--cat-output);
+  --badge-wash: var(--cat-output-wash);
+}
+.badge-utility {
+  --badge-accent: var(--cat-utility);
+  --badge-wash: var(--cat-utility-wash);
+}
+.behavior-io {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.behavior-tag {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 1px 6px;
+}
+.behavior-caret {
+  flex: none;
+  color: var(--ink-500);
+  font-size: 10px;
+}
+.behavior-body {
+  padding: 9px 10px 2px;
+}
+.behavior-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-700);
+  line-height: 1.5;
+}
+.behavior-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--ink-500);
+  line-height: 1.45;
+}
+.behavior-note span {
+  color: var(--brand-600);
+  font-weight: 600;
+}
+
 .cmd-preview {
   margin-top: 16px;
   background: var(--term-bg);

@@ -32,6 +32,20 @@ describe('createRateLimiter', () => {
     expect(limiter.tryAcquire('a')).toBe(false);
   });
 
+  it('hard-caps the tracked-key count under a flood of unique keys', () => {
+    let t = 1000;
+    // ttl long enough that pruning never fires within the test; only the maxKeys
+    // backstop bounds growth.
+    const limiter = createRateLimiter({ minIntervalMs: 100, ttlMs: 1_000_000, maxKeys: 3, now: () => t });
+
+    for (let i = 0; i < 50; i += 1) {
+      t += 1; // distinct instant per key so none are throttled
+      expect(limiter.tryAcquire(`key-${i}`)).toBe(true);
+    }
+
+    expect(limiter.size).toBe(3);
+  });
+
   it('evicts stale keys so long-running processes do not retain every flow id forever', () => {
     let t = 1000;
     const limiter = createRateLimiter({ minIntervalMs: 100, ttlMs: 500, now: () => t });

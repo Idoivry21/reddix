@@ -108,8 +108,8 @@ export function createRoutes(options: RoutesOptions) {
     runFlow: async (flowId) => {
       return runAndStore(flowId);
     },
-    onSkip: async (flowId) => {
-      const run = skippedRun(flowId);
+    onSkip: async (flowId, reason) => {
+      const run = skippedRun(flowId, reason);
       await options.storage.appendRun(run);
       sse.broadcast('run-complete', { run });
       return run;
@@ -349,9 +349,17 @@ export function createRoutes(options: RoutesOptions) {
       });
       return;
     }
-    const run = nodeId
-      ? await runSingleNodeEphemeral(flowId, nodeId, mode as SingleNodeMode)
-      : ((await scheduler.triggerNow(flowId)) as RunRecord);
+    let run: RunRecord;
+    if (nodeId) {
+      run = await runSingleNodeEphemeral(flowId, nodeId, mode as SingleNodeMode);
+    } else {
+      // Full-flow manual run: apply per-provider spacing so manual triggers can't
+      // out-run the CLIs' throttling (invariant 3). Resolve the flow's providers;
+      // a missing flow yields [] and falls through to runAndStore's not-found path.
+      const flow = await options.storage.getFlow(flowId);
+      const providers = flow ? flowProviders(flow) : [];
+      run = (await scheduler.triggerNow(flowId, { providers, enforceSpacing: true })) as RunRecord;
+    }
     respondWithRun(response, run);
   });
 
@@ -497,7 +505,14 @@ export function createRoutes(options: RoutesOptions) {
     sse.closeAll();
   }
 
-  return { router, eventsHandler: sse.handler, closeClients: dispose };
+  // Await in-flight runs before the process kills CLI children, so a flow mid-run
+  // is never severed and its run record always persists. Called during shutdown
+  // after dispose() has stopped the scheduler timer (no new scheduled work).
+  function drainRuns(): Promise<void> {
+    return scheduler.drain();
+  }
+
+  return { router, eventsHandler: sse.handler, closeClients: dispose, drainRuns };
 }
 
 /**
@@ -644,10 +659,13 @@ function failedRun(flowId: string, error: string): RunRecord {
   return makeTerminalRun({ flowId, status: 'failed', error });
 }
 
-function skippedRun(flowId: string): RunRecord {
+function skippedRun(flowId: string, reason?: string): RunRecord {
   return makeTerminalRun({
     flowId,
     status: 'skipped',
-    error: 'Skipped because a previous run is still in flight'
+    error:
+      reason === 'provider-spacing'
+        ? 'Skipped to respect per-provider request spacing; retry shortly'
+        : 'Skipped because a previous run is still in flight'
   });
 }

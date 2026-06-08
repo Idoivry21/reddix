@@ -7,6 +7,56 @@ import { safeSegmentPath } from './safeId';
 import type { PersistedFlow, Preferences, RunRecord } from './types';
 import { isRecord } from '../src/shared/values';
 
+/** The schema version this build reads and writes. Records on disk with a HIGHER
+ *  version were written by a newer Reddix and must never be silently overwritten. */
+const CURRENT_SCHEMA_VERSION = 1;
+/** Fixed key for the single shared preferences file in its serialization mutex. */
+const PREFERENCES_LOCK = 'preferences';
+/** Matches a temp file left by {@link writeJson}: `.<name>.<pid>.<uuid>.tmp`. */
+const TEMP_FILE_PATTERN = /\.(\d+)\.[0-9a-f-]{36}\.tmp$/;
+
+/** True when a persisted record was written by a newer schema than this build. */
+function isFutureVersion(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.schemaVersion === 'number' &&
+    value.schemaVersion > CURRENT_SCHEMA_VERSION
+  );
+}
+
+/** Throw rather than overwrite a single-record file from a newer Reddix version. */
+function assertNotFutureVersion(value: unknown, filePath: string): void {
+  if (isFutureVersion(value)) {
+    throw new Error(`${filePath} was written by a newer Reddix version; refusing to overwrite`);
+  }
+}
+
+/**
+ * Remove temp files orphaned by a write interrupted between open() and rename().
+ * Only deletes temp files stamped with a DIFFERENT pid than this process, so a
+ * concurrent in-flight write by THIS process is never touched. Best-effort:
+ * unreadable dirs and unlink races are swallowed.
+ */
+export async function sweepStaleTempFiles(dirs: string[], logger?: EventLogger): Promise<void> {
+  const ownPid = String(process.pid);
+  for (const dir of dirs) {
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const match = TEMP_FILE_PATTERN.exec(entry);
+      if (!match || match[1] === ownPid) {
+        continue;
+      }
+      await unlink(path.join(dir, entry)).catch(() => {});
+    }
+  }
+  logger?.info('storage.tempSweep', { dirs: dirs.length });
+}
+
 interface StorageOptions {
   baseDir: string;
   maxRunsPerFlow?: number;
@@ -23,6 +73,13 @@ export function createStorage(options: StorageOptions) {
   // (manual POST /runs + scheduler) never drop records.
   const runWriteMutex = createKeyedMutex(logger);
   const flowWriteMutex = createKeyedMutex(logger);
+  // Preferences are a single shared file; serialize its read-modify-write
+  // (getPreferences migrates-on-read) so a migrate-write can't clobber a save.
+  const prefWriteMutex = createKeyedMutex(logger);
+
+  // Best-effort startup sweep of orphaned temp files left by a write that was
+  // interrupted between open() and rename(). Fire-and-forget; never blocks boot.
+  void sweepStaleTempFiles([flowsDir, runsDir, options.baseDir], logger);
 
   async function ensureDirs() {
     await mkdir(flowsDir, { recursive: true });
@@ -34,6 +91,10 @@ export function createStorage(options: StorageOptions) {
       const filePath = safeSegmentPath(flowsDir, flow.id, '.json');
       await flowWriteMutex.run(flow.id, async () => {
         await ensureDirs();
+        // Refuse to overwrite a flow written by a NEWER Reddix version: dropping
+        // to our schema would silently destroy fields we don't understand.
+        const existing = await readJson<unknown>(filePath, null, logger);
+        assertNotFutureVersion(existing, filePath);
         await writeJson(filePath, flow, logger);
       });
     },
@@ -82,7 +143,17 @@ export function createStorage(options: StorageOptions) {
       const filePath = safeSegmentPath(runsDir, run.flowId, '.json');
       await runWriteMutex.run(run.flowId, async () => {
         await ensureDirs();
-        const runs = normalizeRunList(await readJson<unknown>(filePath, [], logger), filePath, logger);
+        const raw = await readJson<unknown>(filePath, [], logger);
+        // Refuse to overwrite history written by a NEWER Reddix version. The capped
+        // write below re-persists the list; if any record is from a future schema
+        // we cannot parse, blindly rewriting would PERMANENTLY drop it. Fail the
+        // append instead so the run surfaces as an error and the data is preserved.
+        if (Array.isArray(raw) && raw.some(isFutureVersion)) {
+          throw new Error(
+            `Run history for ${run.flowId} was written by a newer Reddix version; refusing to overwrite`
+          );
+        }
+        const runs = normalizeRunList(raw, filePath, logger);
         const capped = [...runs, run].slice(-maxRunsPerFlow);
         await writeJson(filePath, capped, logger);
       });
@@ -96,25 +167,34 @@ export function createStorage(options: StorageOptions) {
 
     async getPreferences(): Promise<Preferences> {
       await ensureDirs();
-      const raw = await readJson<unknown>(preferencesPath, {}, logger);
-      const migrated: Preferences = {
-        schemaVersion: 1,
-        defaultExportDir:
-          isRecord(raw) && typeof raw.defaultExportDir === 'string' ? raw.defaultExportDir : 'outputs',
-        selectedFlowId:
-          isRecord(raw) && (typeof raw.selectedFlowId === 'string' || raw.selectedFlowId === null)
-            ? raw.selectedFlowId
-            : null
-      };
-      if (!isRecord(raw) || raw.schemaVersion !== 1) {
-        await writeJson(preferencesPath, migrated, logger);
-      }
-      return migrated;
+      return prefWriteMutex.run(PREFERENCES_LOCK, async () => {
+        const raw = await readJson<unknown>(preferencesPath, {}, logger);
+        const migrated: Preferences = {
+          schemaVersion: 1,
+          defaultExportDir:
+            isRecord(raw) && typeof raw.defaultExportDir === 'string' ? raw.defaultExportDir : 'outputs',
+          selectedFlowId:
+            isRecord(raw) && (typeof raw.selectedFlowId === 'string' || raw.selectedFlowId === null)
+              ? raw.selectedFlowId
+              : null
+        };
+        // Migrate-write back only for OLD/unshaped files. Never rewrite a file from
+        // a NEWER version: that would drop fields we don't model. We still return a
+        // usable view (coerced known fields) without touching the on-disk record.
+        if ((!isRecord(raw) || raw.schemaVersion !== 1) && !isFutureVersion(raw)) {
+          await writeJson(preferencesPath, migrated, logger);
+        }
+        return migrated;
+      });
     },
 
     async savePreferences(preferences: Preferences): Promise<void> {
       await ensureDirs();
-      await writeJson(preferencesPath, preferences, logger);
+      await prefWriteMutex.run(PREFERENCES_LOCK, async () => {
+        const existing = await readJson<unknown>(preferencesPath, null, logger);
+        assertNotFutureVersion(existing, preferencesPath);
+        await writeJson(preferencesPath, preferences, logger);
+      });
     }
   };
 }

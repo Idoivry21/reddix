@@ -49,7 +49,8 @@ export const blockSpecs: BlockSpec[] = [
       sort: 'relevance',
       timeRange: 'month',
       limit: 100
-    }
+    },
+    note: 'Compact output — body/comment fields may be truncated. Add Read Post downstream for full bodies.'
   },
   {
     type: 'reddit.browseSubreddit',
@@ -96,7 +97,8 @@ export const blockSpecs: BlockSpec[] = [
       { key: 'postId', label: 'Post ID', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH },
       { key: 'expandMore', label: 'Expand More', type: 'boolean' }
     ],
-    defaultSettings: { postId: '', expandMore: false }
+    defaultSettings: { postId: '', expandMore: false },
+    note: 'Blank Post ID → fans out, one call per distinct upstream item (≤50; duplicate and wrong-platform items are skipped). Comments are not exported — post record only.'
   },
   {
     type: 'twitter.searchTweets',
@@ -128,7 +130,8 @@ export const blockSpecs: BlockSpec[] = [
       excludeRetweets: true,
       hasLinks: false,
       fullText: true
-    }
+    },
+    note: 'Requires TWITTER_AUTH_TOKEN and TWITTER_CT0 in the environment.'
   },
   {
     type: 'twitter.timelineFeed',
@@ -144,7 +147,8 @@ export const blockSpecs: BlockSpec[] = [
       { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
-    defaultSettings: { timeline: 'following', maxCount: 50, fullText: true }
+    defaultSettings: { timeline: 'following', maxCount: 50, fullText: true },
+    note: 'Requires TWITTER_AUTH_TOKEN and TWITTER_CT0 in the environment.'
   },
   {
     type: 'twitter.bookmarks',
@@ -159,7 +163,8 @@ export const blockSpecs: BlockSpec[] = [
       { key: 'maxCount', label: 'Max Count', type: 'number', min: MIN_FETCH_LIMIT, max: MAX_FETCH_LIMIT },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
-    defaultSettings: { maxCount: 50, fullText: true }
+    defaultSettings: { maxCount: 50, fullText: true },
+    note: 'Requires TWITTER_AUTH_TOKEN and TWITTER_CT0 in the environment.'
   },
   {
     type: 'twitter.userTweets',
@@ -205,7 +210,8 @@ export const blockSpecs: BlockSpec[] = [
       { key: 'tweetIdOrUrl', label: 'Tweet ID or URL', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH, format: 'twitter-id-or-url' },
       { key: 'fullText', label: 'Full Text', type: 'boolean' }
     ],
-    defaultSettings: { tweetIdOrUrl: '', fullText: true }
+    defaultSettings: { tweetIdOrUrl: '', fullText: true },
+    note: 'Blank Tweet ID/URL → fans out, one call per distinct upstream item (≤50; duplicate and wrong-platform items are skipped).'
   },
   {
     type: 'twitter.userProfile',
@@ -217,7 +223,8 @@ export const blockSpecs: BlockSpec[] = [
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
     executable: 'twitter',
     fields: [{ key: 'handle', label: 'Handle', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH }],
-    defaultSettings: { handle: '' }
+    defaultSettings: { handle: '' },
+    note: 'Blank Handle → fans out, one call per distinct upstream item (≤50; duplicate and wrong-platform items are skipped).'
   },
   {
     type: 'twitter.article',
@@ -232,7 +239,8 @@ export const blockSpecs: BlockSpec[] = [
       { key: 'articleIdOrUrl', label: 'Article ID or URL', type: 'text', required: true, maxLength: SHORT_TEXT_MAX_LENGTH, format: 'twitter-id-or-url' },
       { key: 'format', label: 'Format', type: 'select', options: options(['json', 'markdown']) }
     ],
-    defaultSettings: { articleIdOrUrl: '', format: 'json' }
+    defaultSettings: { articleIdOrUrl: '', format: 'json' },
+    note: 'Map the ID/URL field from upstream to enrich per item; otherwise reads one.'
   },
   {
     type: 'transform.limit',
@@ -322,7 +330,8 @@ export const blockSpecs: BlockSpec[] = [
     description: 'Merge compatible social item streams.',
     ports: { input: [socialArrayPort], output: [socialArrayPort] },
     fields: [],
-    defaultSettings: {}
+    defaultSettings: {},
+    note: 'Wire 2+ streams in; provenance (source block) is preserved.'
   },
   {
     type: 'output.exportJson',
@@ -369,7 +378,8 @@ export const blockSpecs: BlockSpec[] = [
     description: 'Write a styled, self-contained HTML report of results.',
     ports: { input: [socialArrayPort], output: [artifactPort] },
     fields: [{ key: 'path', label: 'Path', type: 'path', required: true, maxLength: EXPORT_PATH_MAX_LENGTH, extensions: ['.html'] }],
-    defaultSettings: { path: 'outputs/report.html' }
+    defaultSettings: { path: 'outputs/report.html' },
+    note: 'Self-contained report; content is escaped and only http(s) links are allowed.'
   },
   {
     type: 'utility.note',

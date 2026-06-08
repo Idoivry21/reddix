@@ -14,6 +14,7 @@ import { redactSecrets } from '../src/shared/redaction';
 import type { SecretMap } from '../src/shared/redaction';
 import {
   MAX_FANOUT_CALLS,
+  MAX_NODE_OUTPUT_ITEMS,
   MAX_SAMPLE_ROWS,
   MAX_SAMPLE_TEXT_CHARS,
   MAX_STEP_SAMPLE_ITEMS
@@ -84,6 +85,36 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   const edgesByTarget = groupEdges(options.flow.edges, 'target');
   const edgesBySource = groupEdges(options.flow.edges, 'source');
   const data = new Map<string, SocialItem[]>();
+  // Reference-count each source node's downstream consumers so its output can be
+  // freed from `data` once every consumer has run — bounding peak memory to the
+  // working set instead of the sum of all node outputs. Decrement only when a node
+  // is fully done, so we can under-count (a harmless leak) but never free early.
+  const remainingConsumers = new Map<string, number>();
+  for (const [source, sourceEdges] of edgesBySource) {
+    remainingConsumers.set(source, new Set(sourceEdges.map((edge) => edge.target)).size);
+  }
+  const releaseConsumedInputs = (consumerNodeId: string): void => {
+    const sources = new Set((edgesByTarget.get(consumerNodeId) ?? []).map((edge) => edge.source));
+    for (const source of sources) {
+      const left = (remainingConsumers.get(source) ?? 0) - 1;
+      remainingConsumers.set(source, left);
+      if (left <= 0) {
+        data.delete(source);
+      }
+    }
+  };
+  // Track the largest dataset incrementally for the no-output-node fallback preview
+  // so eviction can drop `data` entries without a post-loop scan losing them. The
+  // winning array (one capped node's worth) is retained by reference even after it
+  // leaves `data`.
+  let fallbackLargest: SocialItem[] = [];
+  let fallbackNodeId: string | null = null;
+  const trackFallback = (nodeId: string, items: SocialItem[]): void => {
+    if (items.length >= fallbackLargest.length) {
+      fallbackLargest = items;
+      fallbackNodeId = nodeId;
+    }
+  };
   const blocked = new Set<string>();
   const steps: RunStep[] = [];
   const outputFiles: Array<{ path: string; bytes: number }> = [];
@@ -129,6 +160,9 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   };
 
   for (const node of nodes) {
+    // Wrapped so a node's consumed upstream outputs are released on EVERY exit
+    // path (skip/continue/break/throw), exactly once — see releaseConsumedInputs.
+    try {
     const dependencyEdges = edgesByTarget.get(node.id) ?? [];
     const dependencyBlocked =
       blocked.has(node.id) || dependencyEdges.some((edge) => blocked.has(edge.source));
@@ -147,6 +181,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
         recordStep(outcome.step, node.type);
         if (outcome.items) {
           data.set(node.id, outcome.items);
+          trackFallback(node.id, outcome.items);
         }
         if (outcome.failed) {
           failed = true;
@@ -161,6 +196,7 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
       const outcome = await runLocalNode(node, inputItems, nodeCtx);
       if (outcome.items) {
         data.set(node.id, outcome.items);
+        trackFallback(node.id, outcome.items);
       }
       if (outcome.artifact) {
         outputFiles.push(outcome.artifact);
@@ -219,29 +255,25 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
         break;
       }
     }
+    } finally {
+      releaseConsumedInputs(node.id);
+    }
   }
 
   // Flows without an output node still get a preview: fall back to the largest
-  // collected dataset. Ties go to the later (more-downstream) node — `data` is
-  // populated in topological order — so the preview names the node closest to the
-  // end of the flow, which is what the user thinks of as "the output". Marked
-  // unsaved so the caption can tell the user nothing was written to a file.
+  // collected dataset. Ties go to the later (more-downstream) node — `trackFallback`
+  // runs in topological order — so the preview names the node closest to the end of
+  // the flow, which is what the user thinks of as "the output". Marked unsaved so the
+  // caption can tell the user nothing was written to a file. Tracked incrementally
+  // (not via a post-loop scan of `data`) so output eviction can't hide a node.
   if (sample.length === 0) {
-    let largest: SocialItem[] = [];
-    let largestNodeId: string | null = null;
-    for (const [nodeId, items] of data.entries()) {
-      if (items.length >= largest.length) {
-        largest = items;
-        largestNodeId = nodeId;
-      }
-    }
-    sample = toSampleRows(largest, redact);
-    if (largestNodeId && largest.length > 0) {
-      const producer = nodes.find((node) => node.id === largestNodeId);
+    sample = toSampleRows(fallbackLargest, redact);
+    if (fallbackNodeId && fallbackLargest.length > 0) {
+      const producer = nodes.find((node) => node.id === fallbackNodeId);
       sampleMeta = {
-        sourceLabel: producer ? getBlockSpec(producer.type).label : largestNodeId,
+        sourceLabel: producer ? getBlockSpec(producer.type).label : fallbackNodeId,
         saved: false,
-        totalItems: largest.length
+        totalItems: fallbackLargest.length
       };
     }
   }
@@ -597,7 +629,7 @@ async function runFanOutCliNode(
       incompatibleSkipped += 1;
       continue;
     }
-    const key = blankKeys.map((fieldKey) => String(resolved[fieldKey])).join(' ');
+    const key = blankKeys.map((fieldKey) => String(resolved[fieldKey])).join('\u0000');
     if (seen.has(key)) {
       dedupSkipped += 1;
       continue;
@@ -665,11 +697,26 @@ async function runFanOutCliNode(
 
   const succeeded = calls.filter((call) => call.error === null);
   const failures = calls.filter((call) => call.error !== null);
-  const items = succeeded.flatMap((call) => call.items);
+  const aggregated = succeeded.flatMap((call) => call.items);
+  // Bound peak memory: even with the call-count cap, each call can return a large
+  // normalized array, so the aggregate could OOM. Truncate to a hard item ceiling
+  // and count the dropped items as skipped (surfaced, never silently lost).
+  const outputTruncated = aggregated.length > MAX_NODE_OUTPUT_ITEMS;
+  const items = outputTruncated ? aggregated.slice(0, MAX_NODE_OUTPUT_ITEMS) : aggregated;
+  const outputDropped = outputTruncated ? aggregated.length - MAX_NODE_OUTPUT_ITEMS : 0;
+  if (outputTruncated) {
+    ctx.logger?.warn('cli.fanoutOutputTruncated', {
+      flowId: ctx.flowId,
+      blockId: node.id,
+      total: aggregated.length,
+      cap: MAX_NODE_OUTPUT_ITEMS
+    });
+  }
   const allFailed = succeeded.length === 0;
   // Every input item that did not contribute to output: wrong-platform/no-value
-  // skips, dedup collisions, fan-out-cap truncation, and per-call failures.
-  const totalSkipped = incompatibleSkipped + dedupSkipped + skipped + failures.length;
+  // skips, dedup collisions, fan-out-cap truncation, per-call failures, and items
+  // dropped by the output ceiling.
+  const totalSkipped = incompatibleSkipped + dedupSkipped + skipped + failures.length + outputDropped;
   const io = makeStepIo(inputItems, items, totalSkipped, ctx.redact);
 
   const summaryParts = [`fan-out ${calls.length} item(s) → ${succeeded.length} enriched`];
@@ -678,6 +725,9 @@ async function runFanOutCliNode(
   }
   if (truncated) {
     summaryParts.push(`capped at ${MAX_FANOUT_CALLS} (${skipped} skipped)`);
+  }
+  if (outputTruncated) {
+    summaryParts.push(`output capped at ${MAX_NODE_OUTPUT_ITEMS} (${outputDropped} dropped)`);
   }
 
   const base = {
@@ -919,6 +969,13 @@ function topologicalNodes(flow: FlowDefinition): FlowNodeModel[] {
         }
       }
     }
+  }
+  // Defense in depth: validateFlow rejects cycles before any caller reaches here,
+  // but a bypass would otherwise silently DROP cyclic nodes from the order — they
+  // would never execute, with no error. Fail loudly instead of producing a result
+  // that quietly ran only part of the flow.
+  if (ordered.length !== flow.nodes.length) {
+    throw new Error('Flow graph contains a cycle; cannot determine execution order');
   }
   return ordered;
 }

@@ -20,6 +20,12 @@ export interface ShutdownDeps {
   log: (message: string) => void;
   /** Hard-exit window if the server does not close in time. */
   forceExitMs: number;
+  /** Await in-flight runs before killing CLI children. When omitted, teardown is
+   *  synchronous (legacy path); when set, children are killed only AFTER runs drain
+   *  (or {@link drainTimeoutMs} elapses), so a flow mid-run is never severed. */
+  drainRuns?: () => Promise<void>;
+  /** Max time to wait for {@link drainRuns}; must be < forceExitMs. Default 0. */
+  drainTimeoutMs?: number;
 }
 
 export interface ShutdownController {
@@ -36,16 +42,60 @@ export function createShutdown(deps: ShutdownDeps): ShutdownController {
     }
     shuttingDown = true;
     deps.log(`[reddix] shutting down (${reason})`);
-    deps.closeClients();
-    deps.killChildren('SIGTERM');
-    deps.closeServer(deps.server, () => deps.exit(exitCode));
-    // Failsafe: force exit if the server does not close in time.
+    // Failsafe first: force exit if drain/close stalls. Unref'd so it never keeps
+    // the process alive on its own.
     const timer = setTimeout(() => deps.exit(exitCode), deps.forceExitMs);
     if (typeof timer.unref === 'function') {
       timer.unref();
     }
+
+    const drainRuns = deps.drainRuns;
+    if (!drainRuns) {
+      // Legacy synchronous teardown (no drain configured): unchanged ordering.
+      deps.closeClients();
+      deps.killChildren('SIGTERM');
+      deps.closeServer(deps.server, () => deps.exit(exitCode));
+      return;
+    }
+
+    // Drain-aware teardown: stop accepting new work, let in-flight runs finish
+    // (bounded), THEN kill any straggler children and close the server. Killing
+    // children before the drain would sever a flow mid-run and record a spurious
+    // failure; draining first lets each run persist its real result.
+    void (async () => {
+      deps.closeClients();
+      try {
+        await withTimeout(drainRuns(), deps.drainTimeoutMs ?? 0);
+      } catch {
+        // A drain failure must never block teardown.
+      }
+      deps.killChildren('SIGTERM');
+      deps.closeServer(deps.server, () => deps.exit(exitCode));
+    })();
   };
   return { shutdown, isShuttingDown: () => shuttingDown };
+}
+
+/**
+ * Resolve when `promise` settles or `ms` elapses, whichever comes first. A
+ * non-positive `ms` waits for the promise with no timeout. The timer is unref'd
+ * so it never holds the event loop open.
+ */
+function withTimeout(promise: Promise<unknown>, ms: number): Promise<void> {
+  if (ms <= 0) {
+    return promise.then(() => undefined);
+  }
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    const done = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    promise.then(done, done);
+  });
 }
 
 /**

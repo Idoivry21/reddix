@@ -22,3 +22,12 @@ export const MAX_SAMPLE_TEXT_CHARS = 500;
  * skipped and surfaced in the step summary (never silently dropped).
  */
 export const MAX_FANOUT_CALLS = 50;
+
+/**
+ * Hard ceiling on the number of items a single node may emit into the run. Bounds
+ * peak memory: a fan-out node aggregates up to {@link MAX_FANOUT_CALLS} CLI results,
+ * each an arbitrarily large normalized array, so without this a wide fan-out can
+ * accumulate enough `SocialItem`s (with their `raw` payloads) to OOM the process.
+ * Items beyond the cap are dropped and surfaced in the step's skipped count.
+ */
+export const MAX_NODE_OUTPUT_ITEMS = 10_000;

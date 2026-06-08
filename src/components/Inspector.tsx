@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { buildBlockCommand, getBlockSpec } from '../shared/commandBuilders';
+import { behaviorSummary } from '../shared/blockBehavior';
 import { inputBindingMeta, inputBoundFieldKeys, readBindings } from '../shared/inputBindings';
 import { normalizedFieldName, type FieldDescriptor } from '../shared/fieldSchema';
 import { isBlank } from '../shared/values';
-import { accentForBlock, iconForBlock } from '../blockVisuals';
+import { accentForBlock, iconForBlock, type AccentKey } from '../blockVisuals';
 import { Icon } from '../icons';
 import type { BuiltCommand, FieldSpec } from '../shared/types';
 import type { NodeIoPreview, WorkbenchNode } from '../flowTypes';
@@ -156,6 +158,8 @@ export function Inspector({
         </div>
       </div>
       <div className="inspector-scroll">
+        <BehaviorPanel blockType={node.blockType} accent={accent} />
+
         {hasUpstream && inputFields.length > 0 ? <InputsPanel fields={inputFields} /> : null}
 
         {fields.length === 0 ? (
@@ -216,6 +220,45 @@ export function Inspector({
         ) : null}
       </div>
     </aside>
+  );
+}
+
+/**
+ * High-level "what + how" for the selected block: a stream-effect badge, the
+ * input→output data summary, and a fan-out tag — all derived from block
+ * metadata. Collapsed by default to a one-line summary; expands to reveal the
+ * purpose and any authored caveat note.
+ */
+function BehaviorPanel({ blockType, accent }: { blockType: string; accent: AccentKey }) {
+  const [open, setOpen] = useState(false);
+  const summary = behaviorSummary(blockType);
+  return (
+    <div className="behavior-panel">
+      <button
+        type="button"
+        className="behavior-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="sr-only">Block behavior: </span>
+        <span className={`effect-badge badge-${accent}`}>{summary.label}</span>
+        <span className="behavior-io">
+          {summary.inLabel} <span aria-hidden="true">→</span> {summary.outLabel}
+        </span>
+        {summary.fanOut ? <span className="behavior-tag">fan-out</span> : null}
+        <span className="behavior-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {open ? (
+        <div className="behavior-body">
+          <p className="behavior-desc">{summary.description}</p>
+          {summary.note ? (
+            <p className="behavior-note">
+              <span aria-hidden="true">⚠</span> {summary.note}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

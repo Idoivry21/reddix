@@ -6,7 +6,7 @@ export type BlockCategory = 'Sources' | 'Enrichment' | 'Transform' | 'Output' | 
 
 export type BlockPriority = 'P0' | 'P1';
 
-export type PortType = 'SocialItem[]' | 'DetailObject' | 'FileArtifact' | 'Any';
+export type PortType = 'SocialItem[]' | 'FileArtifact' | 'Any';
 
 export interface PortSpec {
   id: string;
@@ -52,6 +52,10 @@ export interface BlockSpec {
   /** Present on CLI-backed blocks only; names the binary and doubles as the
    * "is this a CLI block" discriminant. Distinct from the built {@link BuiltCommand}. */
   executable?: 'rdt' | 'twitter';
+  /** Optional one-line caveat surfaced by the behavior panel and block reference
+   * doc. Authored only where a block has a real gotcha (fan-out, compact data,
+   * auth requirement, dropped fields); structural facts are derived, never here. */
+  note?: string;
 }
 
 export interface CommandBuildInput {

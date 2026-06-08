@@ -97,6 +97,42 @@ describe('Inspector', () => {
   });
 });
 
+describe('Inspector behavior panel', () => {
+  it('shows the stream-effect badge and port summary', () => {
+    render(<Inspector node={redditNode()} onSettingChange={vi.fn()} />);
+    expect(screen.getByText('SOURCE')).toBeInTheDocument();
+    expect(screen.getByText(/SocialItem\[\]/)).toBeInTheDocument();
+  });
+
+  it('marks a fan-out-capable enrichment block', () => {
+    render(<Inspector node={tweetDetailNode()} onSettingChange={vi.fn()} />);
+    expect(screen.getByText('ENRICH')).toBeInTheDocument();
+    expect(screen.getByText('fan-out')).toBeInTheDocument();
+  });
+
+  it('keeps the caveat note collapsed until expanded', () => {
+    render(<Inspector node={redditNode()} onSettingChange={vi.fn()} />);
+    expect(screen.queryByText(/may be truncated/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /block behavior/i }));
+    expect(screen.getByText(/may be truncated/i)).toBeInTheDocument();
+  });
+
+  it('renders no caveat row for a block without a note', () => {
+    const node: WorkbenchNode = {
+      id: 'sub',
+      blockType: 'reddit.browseSubreddit',
+      label: 'Subreddit Posts',
+      x: 0,
+      y: 0,
+      settings: { subreddit: 'aww', sort: 'hot', timeRange: 'day', limit: 50 },
+      status: 'idle'
+    };
+    const { container } = render(<Inspector node={node} onSettingChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /block behavior/i }));
+    expect(container.querySelector('.behavior-note')).toBeNull();
+  });
+});
+
 describe('Inspector upstream binding mapper', () => {
   it('renders a read-only mapping row when the node has upstream', () => {
     const { container } = render(<Inspector node={tweetDetailNode()} onSettingChange={vi.fn()} hasUpstream />);

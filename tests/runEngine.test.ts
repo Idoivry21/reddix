@@ -557,6 +557,47 @@ describe('run engine', () => {
     expect(detail?.error).toContain('incompatible');
     expect(result.steps.find((step) => step.blockId === 'export')?.status).toBe('skipped');
   });
+
+  it('keeps a source available for ALL consumers under output eviction', async () => {
+    const result = await runFlow({
+      flow: {
+        id: 'diamond',
+        name: 'Diamond',
+        failFast: false,
+        nodes: [
+          {
+            id: 'search',
+            type: 'reddit.searchPosts',
+            settings: { query: 'cli', subreddit: 'localdev', sort: 'relevance', timeRange: 'month', limit: 10 }
+          },
+          { id: 'exportA', type: 'output.exportJson', settings: { path: 'outputs/a.json', pretty: true } },
+          { id: 'exportB', type: 'output.exportJson', settings: { path: 'outputs/b.json', pretty: true } }
+        ],
+        edges: [
+          { id: 'e1', source: 'search', target: 'exportA', sourcePortId: 'items', targetPortId: 'items' },
+          { id: 'e2', source: 'search', target: 'exportB', sourcePortId: 'items', targetPortId: 'items' }
+        ]
+      },
+      executor: async () => ({
+        stdout: JSON.stringify({
+          data: [
+            { id: 'a', title: 'one', created_utc: 1716500000, score: 1 },
+            { id: 'b', title: 'two', created_utc: 1716500000, score: 2 }
+          ]
+        }),
+        stderr: '',
+        exitCode: 0
+      }),
+      writeArtifact: async (filePath, contents) => ({ path: filePath, bytes: contents.length }),
+      now: () => new Date('2026-06-01T10:00:00Z')
+    });
+
+    expect(result.status).toBe('success');
+    // Both consumers received the source's two items: eviction must not free
+    // `search`'s output after the FIRST consumer ran (ref-counted by consumer).
+    expect(result.steps.find((step) => step.blockId === 'exportA')?.io?.inputCount).toBe(2);
+    expect(result.steps.find((step) => step.blockId === 'exportB')?.io?.inputCount).toBe(2);
+  });
 });
 
 /** Wire a reddit source AND a twitter source into one Tweet Detail block, so the

@@ -30,6 +30,8 @@ interface CreateAppOptions {
 export interface CreatedApp {
   app: express.Express;
   closeClients: () => void;
+  /** Await in-flight runs during graceful shutdown before CLI children are killed. */
+  drainRuns: () => Promise<void>;
 }
 
 /**
@@ -41,7 +43,7 @@ export function createApp(options: CreateAppOptions): CreatedApp {
   const app = express();
   const logger = options.logger ?? createLogger();
   const metrics = options.metrics ?? createMetrics();
-  const { router, eventsHandler, closeClients } = createRoutes({
+  const { router, eventsHandler, closeClients, drainRuns } = createRoutes({
     storage: options.storage,
     dataDir: options.dataDir,
     logger,
@@ -73,5 +75,5 @@ export function createApp(options: CreateAppOptions): CreatedApp {
   }
 
   app.use(createErrorHandler(logger));
-  return { app, closeClients };
+  return { app, closeClients, drainRuns };
 }

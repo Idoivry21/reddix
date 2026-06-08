@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createStorage } from '../server/storage';
+import { createStorage, sweepStaleTempFiles } from '../server/storage';
 import type { PersistedFlow, RunRecord } from '../server/types';
 
 describe('local JSON storage', () => {
@@ -163,6 +163,63 @@ describe('local JSON storage', () => {
 
     expect(await storage.getFlow('flow-2')).toEqual(flow('flow-2'));
     expect((await storage.listRuns('flow-2')).map((record) => record.id)).toEqual(['keep']);
+  });
+
+  it('refuses to overwrite run history written by a newer schema version', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    await mkdir(path.join(dir, 'runs'), { recursive: true });
+    const future = JSON.stringify([{ schemaVersion: 2, id: 'from-the-future', extra: 'field' }]);
+    const runsPath = path.join(dir, 'runs', 'flow-1.json');
+    await writeFile(runsPath, future);
+    const storage = createStorage({ baseDir: dir });
+
+    // The append must FAIL rather than silently drop the unparseable future record.
+    await expect(storage.appendRun(run('new', 'flow-1'))).rejects.toThrow(/newer Reddix version/i);
+    // The on-disk history is preserved byte-for-byte — no data loss.
+    expect(await readFile(runsPath, 'utf8')).toBe(future);
+  });
+
+  it('refuses to overwrite a flow file written by a newer schema version', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    await mkdir(path.join(dir, 'flows'), { recursive: true });
+    const future = JSON.stringify({ schemaVersion: 2, id: 'flow-1', name: 'future flow' });
+    const flowPath = path.join(dir, 'flows', 'flow-1.json');
+    await writeFile(flowPath, future);
+    const storage = createStorage({ baseDir: dir });
+
+    await expect(storage.saveFlow(flow('flow-1'))).rejects.toThrow(/newer Reddix version/i);
+    expect(await readFile(flowPath, 'utf8')).toBe(future);
+  });
+
+  it('does not rewrite a preferences file written by a newer schema version', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const future = JSON.stringify({ schemaVersion: 2, defaultExportDir: 'exports', futureField: true });
+    const prefsPath = path.join(dir, 'preferences.json');
+    await writeFile(prefsPath, future);
+    const storage = createStorage({ baseDir: dir });
+
+    // A usable view is still returned, but the file is left intact (not downgraded).
+    const prefs = await storage.getPreferences();
+    expect(prefs.defaultExportDir).toBe('exports');
+    expect(await readFile(prefsPath, 'utf8')).toBe(future);
+  });
+
+  it('sweeps orphan temp files from other processes but keeps its own', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'reddix-storage-'));
+    const uuid = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+    const foreign = `.flow-1.json.99999.${uuid}.tmp`;
+    const own = `.flow-2.json.${process.pid}.${uuid}.tmp`;
+    const realFile = 'flow-3.json';
+    await writeFile(path.join(dir, foreign), 'orphan');
+    await writeFile(path.join(dir, own), 'in-flight');
+    await writeFile(path.join(dir, realFile), '{}');
+
+    await sweepStaleTempFiles([dir]);
+
+    const remaining = await readdir(dir);
+    expect(remaining).not.toContain(foreign); // another process's orphan: removed
+    expect(remaining).toContain(own); // our own in-flight temp: untouched
+    expect(remaining).toContain(realFile); // a real file: never matched
   });
 
   it('migrates schema-less preferences on load', async () => {

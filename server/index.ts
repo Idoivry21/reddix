@@ -11,6 +11,9 @@ import { createStorage } from './storage';
 
 /** Hard-kill the process if a graceful shutdown stalls past this window. */
 const SHUTDOWN_FORCE_EXIT_MS = 10_000;
+/** Time given to in-flight runs to finish before children are killed. Must be
+ *  comfortably under {@link SHUTDOWN_FORCE_EXIT_MS} so kill + close still fit. */
+const SHUTDOWN_DRAIN_TIMEOUT_MS = 7_000;
 
 const { port, dataDir } = validateEnv(process.env);
 const logger = createLogger();
@@ -26,7 +29,7 @@ const storage = createStorage({ baseDir: dataDir, logger });
 const staticDir = process.env.REDDIX_STATIC_DIR ?? path.join(process.cwd(), 'dist');
 const fatalLogSecrets = buildSecretMap(process.env);
 
-const { app, closeClients } = createApp({ storage, dataDir, staticDir, logger, metrics });
+const { app, closeClients, drainRuns } = createApp({ storage, dataDir, staticDir, logger, metrics });
 
 // Bind to loopback by default (local single-user). Set HOST=0.0.0.0 only for
 // containerized runs where the port is mapped back to the host; CORS allowlist
@@ -41,6 +44,8 @@ const redactFatal = (message: string): string => redactSecrets(message, fatalLog
 const { shutdown, isShuttingDown } = createShutdown({
   server,
   closeClients,
+  drainRuns,
+  drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
   killChildren: killAllCliChildren,
   closeServer,
   exit: (code) => process.exit(code),

@@ -71,6 +71,76 @@ describe('scheduler single-flight', () => {
   });
 });
 
+describe('scheduler drain', () => {
+  it('awaits in-flight runs and rejects new ones while draining', async () => {
+    let release!: () => void;
+    const firstRun = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const skipped: string[] = [];
+    const scheduler = createScheduler({
+      minIntervalMs: MIN,
+      jitterMs: 0,
+      onSkip: async (flowId, reason) => {
+        skipped.push(`${flowId}:${reason}`);
+      },
+      runFlow: async () => {
+        await firstRun;
+      }
+    });
+
+    const first = scheduler.triggerNow('flow-1');
+    let drained = false;
+    const draining = scheduler.drain().then(() => {
+      drained = true;
+    });
+
+    // A run arriving mid-drain is rejected, not started.
+    await scheduler.triggerNow('flow-2');
+    expect(skipped).toEqual(['flow-2:draining']);
+    expect(drained).toBe(false);
+
+    release();
+    await first;
+    await draining;
+    expect(drained).toBe(true);
+  });
+});
+
+describe('scheduler manual provider spacing', () => {
+  it('skips a manual run that breaches per-provider spacing, then allows it after the window', async () => {
+    const clock = fixedClock(0);
+    const fired: string[] = [];
+    const skipped: string[] = [];
+    const scheduler = createScheduler({
+      minIntervalMs: MIN,
+      jitterMs: 0,
+      providerSpacingMs: 5000,
+      now: clock.now,
+      random: () => 0,
+      runFlow: async (flowId) => {
+        fired.push(flowId);
+      },
+      onSkip: async (flowId, reason) => {
+        skipped.push(`${flowId}:${reason}`);
+      }
+    });
+
+    await scheduler.triggerNow('a', { providers: ['reddit'], enforceSpacing: true });
+    expect(fired).toEqual(['a']);
+
+    // A second reddit flow within the spacing window is throttled.
+    await scheduler.triggerNow('b', { providers: ['reddit'], enforceSpacing: true });
+    expect(skipped).toEqual(['b:provider-spacing']);
+    expect(fired).toEqual(['a']);
+
+    // After the window elapses it runs.
+    clock.advance(5000);
+    await scheduler.triggerNow('b', { providers: ['reddit'], enforceSpacing: true });
+    expect(fired).toEqual(['a', 'b']);
+  });
+});
+
 describe('scheduler due calculation', () => {
   it('fires a registered flow only once its next-run time is reached', async () => {
     const clock = fixedClock(0);

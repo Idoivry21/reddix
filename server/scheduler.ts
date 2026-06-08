@@ -19,7 +19,7 @@ interface SchedulerOptions {
   /** How often the internal timer evaluates due flows. */
   tickMs?: number;
   runFlow: (flowId: string) => Promise<unknown>;
-  onSkip: (flowId: string) => Promise<unknown>;
+  onSkip: (flowId: string, reason?: string) => Promise<unknown>;
   now?: () => number;
   random?: () => number;
   logger?: EventLogger;
@@ -47,9 +47,13 @@ export function createScheduler(options: SchedulerOptions) {
   const schedules = new Map<string, ScheduleState>();
   const lastProviderFireAt = new Map<string, number>();
   const waiters: Array<() => void> = [];
+  const drainWaiters: Array<() => void> = [];
   let activeRuns = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let tickInFlight = false;
+  // Set during graceful shutdown: rejects NEW runs and lets {@link drain} await the
+  // in-flight ones so the process never kills a CLI child mid-run.
+  let draining = false;
 
   function computeNextRunAt(intervalMs: number, from: number): number {
     const safeInterval = Math.max(intervalMs, options.minIntervalMs);
@@ -79,13 +83,60 @@ export function createScheduler(options: SchedulerOptions) {
     activeRuns -= 1;
   }
 
-  async function triggerNow(flowId: string): Promise<unknown> {
+  function settleDrainIfIdle(): void {
+    if (draining && running.size === 0) {
+      const waiting = drainWaiters.splice(0);
+      for (const resolve of waiting) {
+        resolve();
+      }
+    }
+  }
+
+  /**
+   * Begin draining: reject NEW runs (via onSkip) and resolve once every in-flight
+   * run has settled. Used by graceful shutdown so CLI children are never killed
+   * out from under a running flow, and the run record persists before exit.
+   */
+  function drain(): Promise<void> {
+    draining = true;
+    if (running.size === 0) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => drainWaiters.push(resolve));
+  }
+
+  async function triggerNow(
+    flowId: string,
+    opts?: { providers?: string[]; enforceSpacing?: boolean }
+  ): Promise<unknown> {
+    if (draining) {
+      logger?.info('schedule.skipped', { flowId, reason: 'draining' });
+      metrics.increment('schedule_skipped_total', { reason: 'draining' });
+      return options.onSkip(flowId, 'draining');
+    }
     if (running.has(flowId)) {
       logger?.info('schedule.skipped', { flowId, reason: 'already-running' });
       metrics.increment('schedule_skipped_total', { reason: 'already-running' });
-      return options.onSkip(flowId);
+      return options.onSkip(flowId, 'already-running');
+    }
+    // Manual runs (POST /runs) opt into per-provider spacing so they cannot out-run
+    // the CLIs' own throttling by bursting a provider faster than scheduled runs
+    // would (security invariant 3). The scheduled path (triggerDue) already spaced
+    // itself and does NOT pass enforceSpacing, so this branch is inert for it.
+    // lastProviderFireAt is shared, so manual and scheduled runs mutually space.
+    const providers = opts?.providers ?? [];
+    if (opts?.enforceSpacing && providers.length > 0 && !isProviderSpaced(providers, now())) {
+      logger?.info('schedule.skipped', { flowId, reason: 'provider-spacing' });
+      metrics.increment('schedule_skipped_total', { reason: 'provider-spacing' });
+      return options.onSkip(flowId, 'provider-spacing');
     }
     running.add(flowId);
+    if (opts?.enforceSpacing) {
+      const firedAt = now();
+      for (const provider of providers) {
+        lastProviderFireAt.set(provider, firedAt);
+      }
+    }
     await acquireRunSlot();
     logger?.info('schedule.triggered', { flowId });
     metrics.increment('schedule_triggered_total');
@@ -94,6 +145,7 @@ export function createScheduler(options: SchedulerOptions) {
     } finally {
       releaseRunSlot();
       running.delete(flowId);
+      settleDrainIfIdle();
     }
   }
 
@@ -211,6 +263,7 @@ export function createScheduler(options: SchedulerOptions) {
     getNextRunAt,
     tick,
     start,
-    stop
+    stop,
+    drain
   };
 }

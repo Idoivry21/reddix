@@ -70,6 +70,42 @@ describe('createShutdown', () => {
     expect(calls.exit).toHaveBeenCalledTimes(1);
   });
 
+  it('drains in-flight runs before killing CLI children when drainRuns is provided', async () => {
+    let releaseDrain!: () => void;
+    const drainGate = new Promise<void>((resolve) => {
+      releaseDrain = resolve;
+    });
+    const drainRuns = vi.fn(() => drainGate);
+    const { deps: d, calls } = deps({ drainRuns, drainTimeoutMs: 5_000 });
+
+    createShutdown(d).shutdown('SIGTERM', 0);
+
+    // Synchronously: clients closed and drain started, but children NOT yet killed
+    // and the server not yet closed — they wait for the drain.
+    expect(calls.closeClients).toHaveBeenCalledTimes(1);
+    expect(drainRuns).toHaveBeenCalledTimes(1);
+    expect(calls.killChildren).not.toHaveBeenCalled();
+    expect(calls.closeServer).not.toHaveBeenCalled();
+
+    releaseDrain();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls.killChildren).toHaveBeenCalledWith('SIGTERM');
+    expect(calls.closeServer).toHaveBeenCalledTimes(1);
+    expect(calls.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('kills children even if the drain never resolves, bounded by the drain timeout', async () => {
+    const drainRuns = vi.fn(() => new Promise<void>(() => {})); // never resolves
+    const { deps: d, calls } = deps({ drainRuns, drainTimeoutMs: 5 });
+
+    createShutdown(d).shutdown('SIGTERM', 0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(calls.killChildren).toHaveBeenCalledWith('SIGTERM');
+    expect(calls.exit).toHaveBeenCalledWith(0);
+  });
+
   it('force-exits after forceExitMs when the server never finishes closing', () => {
     vi.useFakeTimers();
     try {
