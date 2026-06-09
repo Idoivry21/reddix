@@ -8,15 +8,16 @@
 [![Node](https://img.shields.io/badge/node-20.19%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![Tests](https://img.shields.io/badge/tests-Vitest%20%2B%20Playwright-6E9F18.svg)](#testing)
 
-[Quick Start](#development) · [Tool choices](#current-tool-choices) · [Exports](#exports-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+[Quick Start](#development) · [Tool choices](#current-tool-choices) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
 
 </div>
 
 A **local, single-user** canvas automation workbench that wraps two external
 CLIs — `rdt-cli` (Reddit, binary `rdt`) and `twitter-cli` (X/Twitter, binary
 `twitter`). Drag blocks onto a freeform node canvas, connect them, configure
-settings, then run flows manually or on a schedule and export JSON, CSV,
-Markdown, or self-contained HTML reports.
+settings, then run flows manually or on a schedule. Results can be exported as
+JSON, CSV, Markdown, self-contained HTML reports, or delivered to an HTTPS
+webhook.
 
 **V1 is read-only research/export only.** Authenticated write actions
 (post/comment/vote/like/retweet) are out of scope. There is **no database** —
@@ -82,13 +83,21 @@ npm run serve        # builds, then serves UI + API on http://127.0.0.1:8787
 Open http://127.0.0.1:8787. Static assets, `/api/*`, and the `/events` SSE
 stream are all served from the same origin, so no proxy is needed in production.
 
-## Exports and reports
+## Outputs and reports
 
 Output artifacts are written under `REDDIX_DATA_DIR/artifacts/` with timestamped
 filenames so repeated scheduled runs do not overwrite previous results.
 `output.exportHtml` creates a styled, self-contained HTML report. When a run
 produces one, the console shows an "Open report" link served by
 `GET /api/artifacts/*`.
+
+`output.webhook` sends the same normalized result set to an HTTPS endpoint. It
+POSTs `{ flowName, runId, count, items }` as JSON and acts as a terminal sink:
+it does not feed a response back into the flow. The optional `Auth Token Env Var`
+setting stores only an environment variable name; the value is read at run time,
+sent as `Authorization: Bearer <token>`, and redacted from run records, SSE
+events, logs, and command traces. Webhook step output masks URLs to their origin
+so path and query tokens do not show up in the UI.
 
 ## Docker
 
@@ -124,6 +133,7 @@ npm run test:e2e     # playwright (desktop authoring + mobile read-only)
 | `REDDIX_STATIC_DIR` | `./dist` | Built SPA directory served in production. |
 | `REDDIX_MAX_OUTPUT_BYTES` | `10485760` | Per-stream cap on CLI stdout/stderr (OOM guard). |
 | `TWITTER_AUTH_TOKEN`, `TWITTER_CT0` | – | Consumed by `twitter-cli` for auth-required blocks. **Read but never persisted or printed.** |
+| `<WEBHOOK_TOKEN_ENV>` | – | Optional bearer token env var named by an `output.webhook` block. **Read at run time only, never stored or printed.** |
 
 ## Security invariants (non-negotiable)
 
@@ -132,7 +142,8 @@ npm run test:e2e     # playwright (desktop authoring + mobile read-only)
    executor spawns with `shell: false`.
 2. **Secrets never leak.** Auth tokens must not appear in flow JSON, run
    records, the command trace, the SSE stream, or logs. Redaction scrubs them;
-   the redacted `displayArgv` is what is shown/stored.
+   the redacted `displayArgv` is what is shown/stored. Webhook auth tokens are
+   read from env vars, and webhook URLs are masked to origin in run output.
 3. **Never out-run the CLIs' own throttling.** The app adds a minimum schedule
    interval, jitter, single-flight per flow, per-provider spacing, and a /runs
    rate limit on top of the CLIs' built-in backoff — it never disables them.
@@ -141,6 +152,8 @@ npm run test:e2e     # playwright (desktop authoring + mobile read-only)
 5. **HTML reports treat fetched content as hostile.** Report text is escaped,
    links are limited to `http(s)`, and served reports get `nosniff` plus a tight
    CSP.
+6. **Webhook delivery is HTTPS-only.** The webhook block refuses non-HTTPS URLs,
+   sends only POST JSON, and does not parse responses back into the flow.
 
 Flow ids and export paths are validated to stay inside the data directory
 (path-traversal blocked), and API request bodies are validated with `zod`.

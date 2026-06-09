@@ -27,6 +27,8 @@ In scope:
 - Secret redaction in logs, SSE payloads, run records, exports, and UI.
 - Path traversal or symlink escapes from local data/artifact storage.
 - Escaping, link sanitization, and CSP behavior for generated HTML reports.
+- Outbound webhook delivery, including HTTPS enforcement, bearer-token
+  redaction, and origin-only URL masking in user-visible output.
 - CORS, CSRF, rate limiting, scheduler, and local API abuse paths.
 
 Out of scope:

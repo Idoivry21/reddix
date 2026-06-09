@@ -391,3 +391,58 @@ describe('useWorkbenchState history load race across flow switches', () => {
     expect(ids).not.toContain('default-run-1');
   });
 });
+
+describe('useWorkbenchState removeFlow', () => {
+  it('keeps the dashboard open and resets the editor when deleting the active flow', async () => {
+    const { result } = renderHook(() => useWorkbenchState());
+    const originalFlowId = result.current.activeFlowId;
+
+    // User opens the dashboard, then deletes the flow currently on the canvas.
+    act(() => {
+      result.current.setShowDashboard(true);
+    });
+
+    await act(async () => {
+      await result.current.removeFlow(originalFlowId);
+    });
+
+    // Dashboard stays open (no jump into a blank editor) and the editor is
+    // pointed at a fresh flow so it never references the deleted one.
+    expect(result.current.showDashboard).toBe(true);
+    expect(result.current.activeFlowId).not.toBe(originalFlowId);
+    expect(result.current.nodes).toEqual([]);
+  });
+
+  it('leaves the dashboard untouched when deleting a non-active flow', async () => {
+    const { result } = renderHook(() => useWorkbenchState());
+    const originalFlowId = result.current.activeFlowId;
+
+    act(() => {
+      result.current.setShowDashboard(true);
+    });
+
+    await act(async () => {
+      await result.current.removeFlow('some-other-flow');
+    });
+
+    expect(result.current.showDashboard).toBe(true);
+    expect(result.current.activeFlowId).toBe(originalFlowId);
+  });
+
+  it('does not leave a phantom blank card on the dashboard after deleting the active flow', async () => {
+    const { result } = renderHook(() => useWorkbenchState());
+    const originalFlowId = result.current.activeFlowId;
+
+    act(() => {
+      result.current.setShowDashboard(true);
+    });
+
+    await act(async () => {
+      await result.current.removeFlow(originalFlowId);
+    });
+
+    // The reset throwaway flow is blank and unsaved, so it must not appear as a
+    // dashboard card. With no other saved flows, the grid is empty.
+    expect(result.current.dashboardFlows).toEqual([]);
+  });
+});

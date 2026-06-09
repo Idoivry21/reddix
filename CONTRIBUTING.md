@@ -38,17 +38,24 @@ Every code change must preserve these rules:
    user input.
 2. Secrets must not be stored, streamed, rendered, or logged. Use the shared
    redaction helpers for every persisted or user-visible command/run field.
+   Webhook auth tokens must stay env-sourced, and webhook URLs shown in run
+   output must stay masked to origin.
 3. Scheduling must not bypass the underlying CLIs' own throttling or the app's
    local rate limits.
 4. Artifact paths must stay inside `REDDIX_DATA_DIR/artifacts`, including the
    served `/api/artifacts/*` route. Reject traversal and symlink escapes.
 5. HTML reports render fetched social content, so escape text, allow only
    `http(s)` links, and preserve the report CSP.
+6. Webhook outputs may only POST JSON to HTTPS URLs. Do not add arbitrary HTTP
+   verbs, response-fed flow data, or custom headers without a matching threat
+   model update.
 
 Add or update tests whenever a change touches command construction, flow
 validation, storage paths, run records, scheduling, logging, exports, or auth
 handling. Use `tests/htmlReport.test.ts` and `tests/artifactServe.test.ts` as
-the reference patterns for report/export safety.
+the reference patterns for report/export safety, and `tests/webhook.test.ts`,
+`tests/runEngineWebhook.test.ts`, and `tests/redaction.test.ts` for webhook and
+secret-handling changes.
 
 ## Dependency Changes
 

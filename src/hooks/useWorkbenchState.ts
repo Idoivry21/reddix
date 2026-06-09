@@ -617,8 +617,15 @@ export function useWorkbenchState() {
 
   const dashboardFlows = useMemo(() => {
     const others = flowSummaries.filter((flow) => flow.id !== activeFlowId);
+    // Only surface the canvas flow as an "open" card when it represents real
+    // work: it has blocks, or it is an already-saved flow. A fresh blank flow
+    // (e.g. the throwaway created after deleting the active flow) is not a card.
+    const isSavedFlow = flowSummaries.some((flow) => flow.id === activeFlowId);
+    if (nodes.length === 0 && !isSavedFlow) {
+      return others;
+    }
     return [currentSummary, ...others];
-  }, [activeFlowId, currentSummary, flowSummaries]);
+  }, [activeFlowId, currentSummary, flowSummaries, nodes.length]);
 
   // Load another saved flow into the canvas (rehydrate from the persisted shape).
   const openFlow = useCallback(
@@ -656,7 +663,8 @@ export function useWorkbenchState() {
     [activeFlowId, fitView, loadHistory, pushToast]
   );
 
-  const newFlow = useCallback(() => {
+  // Reset the editor to a fresh blank flow without touching dashboard visibility.
+  const resetToBlankFlow = useCallback(() => {
     addCounter.current += 1;
     setActiveFlowId(`flow-${Date.now()}-${addCounter.current}`);
     setNodes([]);
@@ -668,19 +676,24 @@ export function useWorkbenchState() {
     setConsoleState(emptyConsoleState());
     setNodeIoPreview({});
     setLastFullRun(null);
-    setShowDashboard(false);
   }, []);
 
+  const newFlow = useCallback(() => {
+    resetToBlankFlow();
+    setShowDashboard(false);
+  }, [resetToBlankFlow]);
+
   // Delete a saved flow. Removes it from the dashboard list; if it was the flow
-  // currently open on the canvas, reset to a fresh blank flow so the editor never
-  // points at a flow that no longer exists. A 404 (already gone) is still success.
+  // currently open on the canvas, reset the editor to a fresh blank flow so it never
+  // points at a flow that no longer exists — without leaving the dashboard the
+  // delete was triggered from. A 404 (already gone) is still success.
   const removeFlow = useCallback(
     async (flowId: string) => {
       try {
         await deleteFlow(flowId);
         setFlowSummaries((summaries) => summaries.filter((flow) => flow.id !== flowId));
         if (flowId === activeFlowIdRef.current) {
-          newFlow();
+          resetToBlankFlow();
         }
         pushToast('Flow deleted', 'success');
       } catch (error) {
@@ -688,7 +701,7 @@ export function useWorkbenchState() {
         pushToast(`Failed to delete flow: ${message}`, 'error');
       }
     },
-    [newFlow, pushToast]
+    [resetToBlankFlow, pushToast]
   );
 
   return {
