@@ -30,14 +30,20 @@ import type {
   SocialItem
 } from '../src/shared/types';
 import type { EventLogger } from './logger';
+import { computeFlowGraphHash } from './flowHash';
 import { noopMetrics, type Metrics } from './metrics';
 import { makeTerminalRun } from './runRecord';
+import { maskWebhookUrl, postWebhook } from './webhook';
+import type { PostWebhookInput, WebhookResult } from './webhook';
 import type { CliExecutor, FlowDefinition, RunRecord, RunStep } from './types';
 
 interface RunFlowOptions {
   flow: FlowDefinition;
   executor: CliExecutor;
   writeArtifact: (filePath: string, contents: string) => Promise<{ path: string; bytes: number }>;
+  /** Override the webhook delivery function — tests inject a spy. Defaults to the
+   *  real {@link postWebhook}, which opens an HTTPS socket to a third-party host. */
+  sendWebhook?: (input: PostWebhookInput) => Promise<WebhookResult>;
   /**
    * Secret values (e.g. auth tokens) to scrub from every persisted/broadcast
    * string. Security invariant 2: secrets must never reach run records, the SSE
@@ -151,8 +157,11 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
   const nodeCtx: NodeRunContext = {
     executor: options.executor,
     writeArtifact: options.writeArtifact,
+    sendWebhook: options.sendWebhook ?? postWebhook,
+    secrets,
     flowName: options.flow.name,
     flowId,
+    runId,
     now,
     redact,
     redactArgv,
@@ -183,6 +192,22 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
           data.set(node.id, outcome.items);
           trackFallback(node.id, outcome.items);
         }
+        if (outcome.failed) {
+          failed = true;
+          markDownstreamBlocked(node.id, edgesBySource, blocked);
+          if (options.flow.failFast) {
+            break;
+          }
+        }
+        continue;
+      }
+
+      // Webhook is a terminal sink (no output port): dispatch it before the
+      // generic local-node path so it builds a status-bearing step and can fail
+      // the flow under failFast, mirroring the CLI-node dispatch above.
+      if (isWebhookNode(node)) {
+        const outcome = await runWebhookNode(node, inputItems, stepStarted, nodeCtx);
+        recordStep(outcome.step, node.type);
         if (outcome.failed) {
           failed = true;
           markDownstreamBlocked(node.id, edgesBySource, blocked);
@@ -305,7 +330,10 @@ export async function runFlow(options: RunFlowOptions): Promise<RunRecord> {
     outputFiles,
     error: failed ? 'One or more steps failed' : null,
     sample,
-    sampleMeta
+    sampleMeta,
+    // Tag the run with the flow structure it executed so a later cached-upstream
+    // single-node run can detect edits and refuse to feed stale cached samples.
+    flowGraphHash: computeFlowGraphHash(options.flow)
   };
 }
 
@@ -335,6 +363,7 @@ export interface RunSingleNodeOptions {
 export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunRecord> {
   const now = options.now ?? (() => new Date());
   const secrets = options.secrets ?? {};
+  const runId = nanoid();
   const logger = options.logger;
   const metrics = options.metrics ?? noopMetrics;
   const flowId = options.flow.id;
@@ -374,6 +403,16 @@ export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunR
         error: 'No previous full run to source cached upstream from. Run the full flow first.',
         now
       });
+    } else if (options.priorRun.flowGraphHash && options.priorRun.flowGraphHash !== computeFlowGraphHash(options.flow)) {
+      // The cached run was produced from a different flow version (e.g. an upstream
+      // query was edited or the graph rewired). Feeding its samples would silently
+      // serve stale data, so refuse and require a fresh full run.
+      return makeTerminalRun({
+        flowId,
+        status: 'failed',
+        error: 'Flow changed since the cached full run; run the full flow again before using cached upstream.',
+        now
+      });
     } else {
       const gathered: SocialItem[] = [];
       for (const sourceId of upstreamIds) {
@@ -396,8 +435,18 @@ export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunR
     executor: options.executor,
     // Single-node runs never touch disk — compute counts/sample, write nothing.
     writeArtifact: async () => ({ path: '', bytes: 0 }),
+    // Side-effect-free preview: never fire a live webrequest from "preview this
+    // node" — return a success result labeled as a preview instead.
+    sendWebhook: async (input) => ({
+      ok: true,
+      statusCode: null,
+      error: null,
+      summary: `POST ${maskWebhookUrl(input.url)} → preview (not sent)`
+    }),
+    secrets,
     flowName: options.flow.name,
     flowId,
+    runId,
     now,
     redact,
     redactArgv,
@@ -410,6 +459,10 @@ export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunR
   try {
     if (isCliNode(node)) {
       const outcome = await runCliNode(node, inputItems, stepStarted, ctx);
+      step = outcome.step;
+      failed = outcome.failed;
+    } else if (isWebhookNode(node)) {
+      const outcome = await runWebhookNode(node, inputItems, stepStarted, ctx);
       step = outcome.step;
       failed = outcome.failed;
     } else {
@@ -442,7 +495,7 @@ export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunR
   const sampleItems = step.io?.sampleItems ?? [];
   return {
     schemaVersion: 1,
-    id: nanoid(),
+    id: runId,
     flowId,
     status: failed ? 'failed' : 'success',
     startedAt,
@@ -467,8 +520,16 @@ export async function runSingleNode(options: RunSingleNodeOptions): Promise<RunR
 interface NodeRunContext {
   executor: CliExecutor;
   writeArtifact: RunFlowOptions['writeArtifact'];
+  /** Delivers a webhook POST. Real `postWebhook` in a full run; a side-effect-free
+   *  no-op in single-node preview so "preview this node" never fires a request. */
+  sendWebhook: (input: PostWebhookInput) => Promise<WebhookResult>;
+  /** Run secret map (auth tokens). Also the source of a webhook node's resolved
+   *  bearer token, keyed by its `authTokenEnvVar` name. */
+  secrets: SecretMap;
   flowName: string;
   flowId: string;
+  /** This run's id, threaded into the webhook envelope. */
+  runId: string;
   now: () => Date;
   redact: (value: string) => string;
   redactArgv: (value: string[]) => string[];
@@ -776,10 +837,60 @@ async function runLocalNode(
   return { items: inputItems };
 }
 
+/**
+ * Run the terminal webhook sink: POST a `{ flowName, runId, count, items }`
+ * envelope to the node's HTTPS URL. The bearer token (when configured) is read
+ * from the run's secret map by the node's `authTokenEnvVar` name — so it is both
+ * sent in the Authorization header AND scrubbed from every persisted string. The
+ * step records only `['POST', maskedUrl]` and a `POST <origin> → <status>`
+ * summary; non-2xx / network / timeout marks the step failed. Terminal, so it
+ * blocks nothing downstream, but a `failFast` flow stops on it (the caller owns
+ * that, mirroring CLI-node handling).
+ */
+async function runWebhookNode(
+  node: FlowNodeModel,
+  inputItems: SocialItem[],
+  stepStarted: string,
+  ctx: NodeRunContext
+): Promise<{ step: RunStep; failed: boolean }> {
+  const url = typeof node.settings.url === 'string' ? node.settings.url : '';
+  const envVar = typeof node.settings.authTokenEnvVar === 'string' ? node.settings.authTokenEnvVar.trim() : '';
+  const token = envVar ? ctx.secrets[envVar] ?? null : null;
+  const body = {
+    flowName: ctx.flowName,
+    runId: ctx.runId,
+    count: inputItems.length,
+    items: inputItems
+  };
+  const result = await ctx.sendWebhook({ url, token, body });
+  const base = {
+    blockId: node.id,
+    argv: ctx.redactArgv(['POST', maskWebhookUrl(url)]),
+    exitCode: null,
+    stdoutSummary: summarizeStdout(ctx.redact(result.summary)),
+    stderr: result.error ? ctx.redact(result.error) : '',
+    startedAt: stepStarted,
+    endedAt: ctx.now().toISOString(),
+    // Terminal sink: it "passes through" its input to the remote endpoint, so the
+    // I/O preview shows N in / N delivered (mirrors how export nodes report).
+    io: makeStepIo(inputItems, inputItems, 0, ctx.redact)
+  };
+  if (!result.ok) {
+    return {
+      step: { ...base, status: 'failed', error: ctx.redact(result.error ?? 'Webhook delivery failed') },
+      failed: true
+    };
+  }
+  return { step: { ...base, status: 'success', error: null }, failed: false };
+}
+
 /** Coarse operation class for a node, used to label step-failure logs. */
 function operationOf(node: FlowNodeModel): string {
   if (isCliNode(node)) {
     return 'cli';
+  }
+  if (isWebhookNode(node)) {
+    return 'webhook';
   }
   if (node.type.startsWith('output.')) {
     return 'export';
@@ -946,6 +1057,10 @@ function bindPolicy(settings: Record<string, unknown>): 'skip' | 'fail' {
 
 function isCliNode(node: FlowNodeModel): boolean {
   return node.type.startsWith('reddit.') || node.type.startsWith('twitter.');
+}
+
+function isWebhookNode(node: FlowNodeModel): boolean {
+  return node.type === 'output.webhook';
 }
 
 function topologicalNodes(flow: FlowDefinition): FlowNodeModel[] {

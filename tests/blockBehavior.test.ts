@@ -30,6 +30,10 @@ describe('streamEffect', () => {
     expect(streamEffect('output.exportHtml')).toBe('export');
   });
 
+  it('classifies a terminal sink with no output port (webhook) as export', () => {
+    expect(streamEffect('output.webhook')).toBe('export');
+  });
+
   it('classifies a no-data block as annotation', () => {
     expect(streamEffect('utility.note')).toBe('annotation');
   });
@@ -90,6 +94,15 @@ describe('behaviorSummary', () => {
     expect(summary.effect).toBe('export');
     expect(summary.inLabel).toBe('SocialItem[]');
     expect(summary.outLabel).toBe('FileArtifact');
+  });
+
+  it('labels a webhook sink as export with no concrete output and its auth note', () => {
+    const summary = behaviorSummary('output.webhook');
+    expect(summary.effect).toBe('export');
+    expect(summary.inLabel).toBe('SocialItem[]');
+    expect(summary.outLabel).toBe('—');
+    expect(summary.fanOut).toBe(false);
+    expect(summary.note).toMatch(/never stored or logged/i);
   });
 
   it('shows — for an annotation block with no data ports', () => {

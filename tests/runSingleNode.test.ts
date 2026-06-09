@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runSingleNode } from '../server/runEngine';
+import { computeFlowGraphHash } from '../server/flowHash';
 import type { FlowDefinition, RunRecord } from '../server/types';
 import type { RunStepSampleItem } from '../src/shared/types';
 
@@ -89,6 +90,37 @@ describe('runSingleNode', () => {
 
     expect(run.status).toBe('failed');
     expect(run.error).toContain('No previous full run');
+  });
+
+  it('rejects cached-upstream when the cached run was tagged for a different flow version', async () => {
+    const run = await runSingleNode({
+      flow: detailFlow(),
+      nodeId: 'detail',
+      mode: 'cached-upstream',
+      // A full run whose flow hash does not match the current flow (e.g. the
+      // upstream search query was edited after this run was cached).
+      priorRun: { ...priorRunWith([tweetSample('111')]), flowGraphHash: 'stale-flow-hash' },
+      executor: async (command) => ({ stdout: detailStdout(command.argv[1]), stderr: '', exitCode: 0 }),
+      now: NOW
+    });
+
+    expect(run.status).toBe('failed');
+    expect(run.error).toMatch(/changed|run the full flow/i);
+  });
+
+  it('accepts cached-upstream when the cached run matches the current flow version', async () => {
+    const flow = detailFlow();
+    const run = await runSingleNode({
+      flow,
+      nodeId: 'detail',
+      mode: 'cached-upstream',
+      priorRun: { ...priorRunWith([tweetSample('111')]), flowGraphHash: computeFlowGraphHash(flow) },
+      executor: async (command) => ({ stdout: detailStdout(command.argv[1]), stderr: '', exitCode: 0 }),
+      now: NOW
+    });
+
+    expect(run.status).toBe('success');
+    expect(run.steps[0].io?.outputCount).toBe(1);
   });
 
   it('fails when the upstream node has no cached output (old record)', async () => {

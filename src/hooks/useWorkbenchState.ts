@@ -390,6 +390,12 @@ export function useWorkbenchState() {
     (flowId: string) => {
       listRuns(flowId)
         .then((runs) => {
+          // A slow history response can land after the user has switched flows.
+          // Drop it unless it still belongs to the active flow, so one flow's
+          // history can never bleed into another flow's console.
+          if (activeFlowIdRef.current !== flowId) {
+            return;
+          }
           const entries = runsToHistoryEntries(runs);
           setConsoleState((current) => ({ ...current, history: mergeHistory(entries, current.history) }));
         })

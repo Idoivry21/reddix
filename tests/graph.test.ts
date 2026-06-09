@@ -209,4 +209,55 @@ describe('graph validation', () => {
 
     expect(validateFlow({ nodes, edges }).valid).toBe(true);
   });
+
+  it('flags an unconnected webhook output as unreachable from a source', () => {
+    const result = validateFlow({
+      nodes: [{ id: 'hook', type: 'output.webhook', settings: { url: 'https://hooks.example.com/x', authTokenEnvVar: '' } }],
+      edges: []
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual({
+      nodeId: 'hook',
+      message: 'Output block is not reachable from a source'
+    });
+  });
+
+  it('rejects a non-HTTPS webhook url via the field pattern', () => {
+    const result = validateFlow({
+      nodes: [
+        starterNodes[0],
+        { id: 'hook', type: 'output.webhook', settings: { url: 'http://hooks.example.com/x', authTokenEnvVar: '' } }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'hook', sourcePortId: 'items', targetPortId: 'items' }]
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual({ nodeId: 'hook', message: 'URL has an invalid format' });
+  });
+
+  it('requires the webhook url', () => {
+    const result = validateFlow({
+      nodes: [
+        starterNodes[0],
+        { id: 'hook', type: 'output.webhook', settings: { url: '', authTokenEnvVar: '' } }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'hook', sourcePortId: 'items', targetPortId: 'items' }]
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual({ nodeId: 'hook', message: 'URL is required' });
+  });
+
+  it('accepts a wired webhook output with a valid HTTPS url', () => {
+    const result = validateFlow({
+      nodes: [
+        starterNodes[0],
+        { id: 'hook', type: 'output.webhook', settings: { url: 'https://hooks.example.com/x', authTokenEnvVar: 'WEBHOOK_TOKEN' } }
+      ],
+      edges: [{ id: 'e1', source: 'search', target: 'hook', sourcePortId: 'items', targetPortId: 'items' }]
+    });
+
+    expect(result.valid).toBe(true);
+  });
 });

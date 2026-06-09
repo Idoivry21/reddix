@@ -53,6 +53,28 @@ async function start(dataDir: string, options: AppOptions = {}): Promise<string>
   });
 }
 
+/**
+ * Open a real SSE connection and resolve once the server has registered the
+ * client (signalled by the first `event: ready` chunk, written right after the
+ * client is added to the hub), so the health endpoint can observe the live count.
+ */
+function openSse(url: string): Promise<{ close: () => void }> {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, (res) => {
+      res.on('data', () => {
+        resolve({
+          close: () => {
+            request.destroy();
+            res.destroy();
+          }
+        });
+      });
+      res.on('error', () => {});
+    });
+    request.on('error', reject);
+  });
+}
+
 describe('GET /api/health (finding 5)', () => {
   it('reports ok=true with a writable data dir and surfaces storage + sse state', async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), 'reddix-health-'));
@@ -110,6 +132,24 @@ describe('GET /api/health (finding 5)', () => {
     const errno = (degradedCall![1] as { errno: string }).errno;
     expect(body.storage).toEqual({ writable: false });
     expect(JSON.stringify(body)).not.toContain(errno);
+  });
+
+  it('reports the live SSE client count, not a value frozen in the cached snapshot', async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'reddix-health-'));
+    // A large TTL means the first snapshot would normally be reused verbatim;
+    // the live client count must still be reflected on the second call.
+    const base = await start(dataDir, { healthCacheTtlMs: 30_000 });
+
+    const first = (await (await fetch(`${base}/api/health`)).json()) as { sseClients: number };
+    expect(first.sseClients).toBe(0);
+
+    const sse = await openSse(`${base}/events`);
+    try {
+      const second = (await (await fetch(`${base}/api/health`)).json()) as { sseClients: number };
+      expect(second.sseClients).toBe(1);
+    } finally {
+      sse.close();
+    }
   });
 
   it('dedupes concurrent provider probes and reuses the cached health snapshot', async () => {

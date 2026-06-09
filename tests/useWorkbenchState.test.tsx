@@ -318,3 +318,76 @@ describe('useWorkbenchState spliceNodeIntoEdge', () => {
     expect(edges.some((edge) => edge.source === newId && edge.target === 'sort')).toBe(true);
   });
 });
+
+describe('useWorkbenchState history load race across flow switches', () => {
+  function runRecord(id: string, flowId: string): RunRecord {
+    return {
+      schemaVersion: 1,
+      id,
+      flowId,
+      status: 'success',
+      startedAt: '2026-06-01T00:00:00.000Z',
+      endedAt: '2026-06-01T00:00:01.000Z',
+      steps: [],
+      outputFiles: [],
+      error: null
+    };
+  }
+
+  it('does not merge a slow default-flow history response into a flow opened mid-flight', async () => {
+    // The default-flow history fetch fired on mount is gated so it resolves only
+    // AFTER the user has already switched to another flow.
+    let releasePrimaryHistory!: () => void;
+    const primaryHistoryGate = new Promise<void>((resolve) => {
+      releasePrimaryHistory = resolve;
+    });
+
+    const otherFlow = {
+      schemaVersion: 1,
+      id: 'other-flow',
+      name: 'Other Flow',
+      failFast: false,
+      nodes: [],
+      edges: [],
+      nodePositions: {},
+      blockSettings: {},
+      schedule: { enabled: false },
+      createdAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: '2026-06-01T00:00:00.000Z'
+    };
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/runs/primary-flow') {
+        await primaryHistoryGate;
+        return jsonResponse({ runs: [runRecord('default-run-1', 'primary-flow')] });
+      }
+      if (url === '/api/runs/other-flow') {
+        return jsonResponse({ runs: [runRecord('other-run-1', 'other-flow')] });
+      }
+      if (url === '/api/flows/other-flow') {
+        return jsonResponse({ flow: otherFlow });
+      }
+      return jsonResponse({ flow: {} });
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useWorkbenchState());
+
+    await act(async () => {
+      await result.current.openFlow('other-flow');
+    });
+    await waitFor(() => {
+      expect(result.current.consoleState.history.map((entry) => entry.id)).toContain('other-run-1');
+    });
+
+    // Now let the stale primary-flow history resolve and flush its merge.
+    await act(async () => {
+      releasePrimaryHistory();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const ids = result.current.consoleState.history.map((entry) => entry.id);
+    expect(ids).toContain('other-run-1');
+    expect(ids).not.toContain('default-run-1');
+  });
+});

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useProviderHealth } from '../src/hooks/useProviderHealth';
 
@@ -54,5 +54,37 @@ describe('useProviderHealth', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.hasError).toBe(true);
+  });
+
+  it('refetches on an interval so a recovered CLI is reflected without remounting', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          healthResponse({ ok: true, app: 'Reddix', providers: [{ provider: 'twitter', executable: 'twitter', available: false }] })
+        )
+        .mockResolvedValue(
+          healthResponse({ ok: true, app: 'Reddix', providers: [{ provider: 'twitter', executable: 'twitter', available: true }] })
+        );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { result } = renderHook(() => useProviderHealth());
+
+      // Flush the initial mount fetch: twitter still missing.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(result.current.providers[0]?.available).toBe(false);
+
+      // Advance past the refresh interval; the next poll sees twitter recovered.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31_000);
+      });
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+      expect(result.current.providers[0]?.available).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

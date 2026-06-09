@@ -5,7 +5,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import { getProviderHealthCommands, listBlockSpecs } from '../src/shared/commandBuilders';
 import { validateFlow } from '../src/shared/graph';
-import { buildSecretMap, redactSecrets } from '../src/shared/redaction';
+import { buildSecretMap, collectWebhookSecrets, redactSecrets } from '../src/shared/redaction';
 import { MAX_SCHEDULE_INTERVAL_MS, MIN_SCHEDULE_INTERVAL_MS } from '../src/shared/schedule';
 import { CLI_PROVIDERS } from '../src/shared/providers';
 import { checkExecutable, createCliExecutor } from './executor';
@@ -67,12 +67,13 @@ interface RoutesOptions {
 
 interface HealthSnapshot {
   statusCode: number;
+  // Only non-volatile probe results are cached here. The live SSE client count is
+  // overlaid at response time so it is never served stale from a cached snapshot.
   body: {
     ok: boolean;
     app: string;
     providers: Array<{ provider: string; executable: string; available: boolean }>;
     storage: { writable: boolean };
-    sseClients: number;
   };
 }
 
@@ -165,7 +166,9 @@ export function createRoutes(options: RoutesOptions) {
 
   router.get('/health', async (_request, response) => {
     const snapshot = await getHealthSnapshot();
-    response.status(snapshot.statusCode).json(snapshot.body);
+    // Overlay the live SSE client count so it is never served stale from the
+    // cached probe snapshot.
+    response.status(snapshot.statusCode).json({ ...snapshot.body, sseClients: sse.clientCount });
   });
 
   router.get('/metrics', (_request, response) => {
@@ -405,7 +408,10 @@ export function createRoutes(options: RoutesOptions) {
     const run = await runFlow({
       flow,
       executor,
-      secrets,
+      // Merge the flow's webhook auth tokens (resolved from named env vars) into
+      // the base CLI secret map so they are scrubbed from run records, the SSE
+      // stream, and logs (security invariant 2).
+      secrets: { ...secrets, ...collectWebhookSecrets(flow, process.env) },
       writeArtifact: createArtifactWriter(options.dataDir),
       emit: (event) => sse.broadcast('run-step', event),
       logger,
@@ -443,7 +449,9 @@ export function createRoutes(options: RoutesOptions) {
       nodeId,
       mode,
       executor,
-      secrets,
+      // Single-node preview never fires a real webhook, but merge the tokens for
+      // defense in depth so a resolved value can never surface in the output.
+      secrets: { ...secrets, ...collectWebhookSecrets(flow, process.env) },
       emit: (event) => sse.broadcast('run-step', event),
       logger,
       metrics,
@@ -496,7 +504,7 @@ export function createRoutes(options: RoutesOptions) {
     }
     return {
       statusCode: ok ? 200 : 503,
-      body: { ok, app: 'Reddix', providers, storage: { writable: storageWritable }, sseClients: sse.clientCount }
+      body: { ok, app: 'Reddix', providers, storage: { writable: storageWritable } }
     };
   }
 

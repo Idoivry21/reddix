@@ -15,7 +15,8 @@ import type { BlockSpec, PortSpec } from './types';
  *  - `source`     — creates items (no input, emits SocialItem[]).
  *  - `enrich`     — CLI fetch of per-item detail (SocialItem[] in and out).
  *  - `transform`  — local reshape of the stream (SocialItem[] in and out).
- *  - `export`     — writes a file artifact, ending the branch.
+ *  - `export`     — writes a file artifact OR delivers results to a sink (e.g. a
+ *                   webhook), ending the branch.
  *  - `annotation` — carries no data (e.g. a canvas note).
  */
 export type StreamEffect = 'source' | 'enrich' | 'transform' | 'export' | 'annotation';
@@ -47,7 +48,10 @@ function effectForSpec(spec: BlockSpec): StreamEffect {
     return 'export';
   }
   if (!output.some((port) => port.type === 'SocialItem[]')) {
-    return 'annotation';
+    // No concrete output. A node that still CONSUMES items is a terminal sink
+    // (e.g. the webhook) — it ends the branch like an export, just without a
+    // file. One that consumes nothing is a canvas annotation.
+    return input.some((port) => port.type === 'SocialItem[]') ? 'export' : 'annotation';
   }
   if (input.length === 0) {
     return 'source';

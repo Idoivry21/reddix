@@ -233,4 +233,12 @@ export interface RunRecord {
   /** Present on isolated single-node runs so the console can label them; such runs
    *  are NOT persisted to run history (ephemeral). Absent on full-flow runs. */
   trigger?: { kind: 'single-node'; nodeId: string; mode: SingleNodeMode };
+  /**
+   * Deterministic hash of the flow's structure (node ids/types/settings + edges)
+   * at the time of a FULL run. A later `cached-upstream` single-node run compares
+   * this against the current flow and refuses to feed cached samples if it changed,
+   * so editing an upstream query or rewiring the graph can never silently feed stale
+   * data. Optional for back-compat: runs persisted before this field are not validated.
+   */
+  flowGraphHash?: string;
 }

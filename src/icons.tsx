@@ -23,7 +23,8 @@ export const ICON_PATHS = {
   flame: '<path d="M12 2c1 4 4 5 4 9a4 4 0 0 1-8 0c0-1 .5-2 1-2.5C9 11 10 12 10 13a2 2 0 0 0 4 0c0-3-3-4-2-11Z"/>',
   trash: '<path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  minus: '<path d="M5 12h14"/>'
+  minus: '<path d="M5 12h14"/>',
+  send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z"/>'
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

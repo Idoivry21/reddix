@@ -49,6 +49,7 @@ const ICON_BY_TYPE: Record<string, IconName> = {
   'output.exportJson': 'braces',
   'output.exportCsv': 'download',
   'output.exportMarkdown': 'file',
+  'output.webhook': 'send',
   'utility.note': 'sparkle'
 };
 
@@ -141,6 +142,8 @@ export function summaryForBlock(blockType: string, settings: Record<string, unkn
     case 'output.exportCsv':
     case 'output.exportMarkdown':
       return [{ key: 'file', value: str(settings.path, '—'), accent: true }];
+    case 'output.webhook':
+      return [{ key: 'url', value: str(settings.url, '—'), accent: true }];
     case 'utility.note':
       return [{ key: 'note', value: str(settings.text, '—') }];
     default:

@@ -15,6 +15,11 @@ const twitterTimelineOptions = options(['following', 'for-you']);
 const QUERY_MAX_LENGTH = 4096;
 const SHORT_TEXT_MAX_LENGTH = 256;
 const EXPORT_PATH_MAX_LENGTH = 512;
+const WEBHOOK_URL_MAX_LENGTH = 2048;
+const ENV_VAR_NAME_MAX_LENGTH = 128;
+// An env var name: leading letter/underscore, then word chars. Single-sourced so
+// the block field validation and `collectWebhookSecrets` resolution stay aligned.
+export const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export const blockSpecs: BlockSpec[] = [
   {
@@ -380,6 +385,37 @@ export const blockSpecs: BlockSpec[] = [
     fields: [{ key: 'path', label: 'Path', type: 'path', required: true, maxLength: EXPORT_PATH_MAX_LENGTH, extensions: ['.html'] }],
     defaultSettings: { path: 'outputs/report.html' },
     note: 'Self-contained report; content is escaped and only http(s) links are allowed.'
+  },
+  {
+    type: 'output.webhook',
+    label: 'Send Webhook',
+    provider: 'local',
+    category: 'Output',
+    priority: 'P1',
+    description: 'POST flow results to an HTTPS webhook endpoint.',
+    // Terminal sink: consumes items, emits nothing back into the flow (no output port).
+    ports: { input: [socialArrayPort], output: [] },
+    fields: [
+      {
+        key: 'url',
+        label: 'URL',
+        type: 'text',
+        required: true,
+        maxLength: WEBHOOK_URL_MAX_LENGTH,
+        pattern: /^https:\/\//,
+        help: 'HTTPS endpoint to POST results to.'
+      },
+      {
+        key: 'authTokenEnvVar',
+        label: 'Auth Token Env Var',
+        type: 'text',
+        maxLength: ENV_VAR_NAME_MAX_LENGTH,
+        pattern: ENV_VAR_NAME_PATTERN,
+        help: 'Optional env var name holding a bearer token. Sent as Authorization: Bearer. The value is never stored or logged.'
+      }
+    ],
+    defaultSettings: { url: '', authTokenEnvVar: '' },
+    note: 'POSTs {flowName, runId, count, items} as JSON. HTTPS only. Auth token is read from the named env var at run time and never stored or logged.'
   },
   {
     type: 'utility.note',
