@@ -1,0 +1,8 @@
+{
+  "name": "reddix",
+  "version": "0.1.0",
+  "description": "Local single-user canvas automation workbench wrapping rdt-cli and twitter-cli (read-only research/export).",
+  "skills": [
+    "./skills/"
+  ]
+}

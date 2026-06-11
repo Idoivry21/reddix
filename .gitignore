@@ -1,0 +1,40 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies & build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.tsbuildinfo
+.vite/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data & generated artifacts
+.reddix-data/
+outputs/
+out/
+.playwright-mcp/
+test-results/
+playwright-report/
+
+# OS
+.DS_Store
+
+# Local agent/harness tooling (not part of the product)
+.claude/
+.claude-plugin/
+.codegraph/
+.harness-mem/
+.harness/
+.superpowers/
+CLAUDE.md
+harness.toml
+Plans.md
+docs/superpowers/
+docs/test-coverage-gap-audit-*.md
