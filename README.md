@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/node-20.19%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![Tests](https://img.shields.io/badge/tests-Vitest%20%2B%20Playwright-6E9F18.svg)](#testing)
 
-[Quick Start](#development) · [Tool choices](#current-tool-choices) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+[Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
 
 </div>
 
@@ -55,6 +55,61 @@ core local-first safety model stabilizes.
 These are the current choices. The social CLIs are intentionally **not bundled**:
 Reddix detects whether they are available and reports missing provider health in
 the UI.
+
+## Credentials
+
+Reddix never asks for, stores, or transmits your social account passwords. The
+provider CLIs handle their own authentication; Reddix only spawns them and, for
+X/Twitter, passes through two environment variables. You are responsible for
+obtaining credentials in line with each platform's Terms of Service and
+developer policies.
+
+### Reddit (`rdt-cli`)
+
+Reddit access goes through [`rdt-cli`](https://github.com/public-clis/rdt-cli),
+which uses Reddit's official API. Follow that project's setup instructions for
+the authoritative steps; the typical flow is:
+
+1. Sign in at [reddit.com](https://www.reddit.com) and open
+   **[reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)**.
+2. Click **Create app** (or **Create another app**) and choose the **script**
+   app type for personal, read-only use.
+3. Set the redirect URI to `http://localhost:8080` (or whatever the CLI's docs
+   specify), then create the app.
+4. Copy the generated **client ID** (under the app name) and **client secret**.
+5. Provide them to `rdt-cli` using its own configuration/login command or the
+   environment variables it documents. Reddix reads none of these values — they
+   live entirely with the CLI.
+
+Public read-only Reddit endpoints may work without credentials, but supplying
+your own app keeps you within Reddit's rate limits and API terms.
+
+### X/Twitter (`twitter-cli`)
+
+X/Twitter access goes through
+[`twitter-cli`](https://github.com/public-clis/twitter-cli). Auth-required
+blocks (e.g. bookmarks, timeline, likes) need two session cookies from a
+**logged-in** X account, supplied to Reddix as environment variables:
+
+1. Sign in to **[x.com](https://x.com)** in a desktop browser.
+2. Open the browser **DevTools → Application/Storage → Cookies → `https://x.com`**.
+3. Copy the value of the **`auth_token`** cookie → set `TWITTER_AUTH_TOKEN`.
+4. Copy the value of the **`ct0`** cookie → set `TWITTER_CT0`.
+5. Put them in your local `.env` (copy from `.env.example`) or export them in the
+   shell that launches the backend.
+
+```bash
+# .env (never commit real values)
+TWITTER_AUTH_TOKEN=your_auth_token_cookie
+TWITTER_CT0=your_ct0_cookie
+```
+
+These tokens are read from the environment at run time and are **never persisted
+to flow JSON, run records, the command trace, the SSE stream, or logs** (see
+[Security invariants](#security-invariants-non-negotiable)). They grant access to
+your account, so treat them like passwords: keep them out of version control,
+rotate them by logging out/in on x.com, and remove them when you no longer need
+auth-required blocks. Many search/read blocks work without any X credentials.
 
 ## Development
 
@@ -181,6 +236,19 @@ access. The application stack also depends on React, Vite, Express, `zod`,
 These projects are credited for their tooling and libraries. They are not
 bundled with Reddix unless listed as npm dependencies, and Reddix is not
 affiliated with Reddit, X/Twitter, or the upstream CLI maintainers.
+
+## Disclaimer
+
+Reddix is provided "as is", without warranty of any kind, express or implied. To
+the maximum extent permitted by applicable law, the authors, maintainers, and
+contributors shall not be liable for any claim, damages, or other liability —
+whether in contract, tort, or otherwise — arising from, out of, or in connection
+with the software or its use. You alone are responsible for how you use Reddix
+and the provider CLIs, including compliance with Reddit's and X/Twitter's Terms
+of Service, API terms, developer policies, and all applicable laws, as well as
+for safeguarding any credentials you supply. Reddix is an independent project and
+is not affiliated with, endorsed by, or sponsored by Reddit, X/Twitter, or the
+upstream CLI maintainers.
 
 ## License
 
