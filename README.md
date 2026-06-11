@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/node-20.19%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![Tests](https://img.shields.io/badge/tests-Vitest%20%2B%20Playwright-6E9F18.svg)](#testing)
 
-[Install](#install) · [Screenshots](#screenshots) · [Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Blocks](docs/block-reference.md) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+[Install](#install) · [Screenshots](#screenshots) · [Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Blocks](docs/block-reference.md) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable)
 
 ![Reddix workbench](docs/screenshots/workbench-light.png)
 
@@ -77,6 +77,32 @@ image? See [Docker](#docker).
 Requires **Node.js 20.19+ or 22.12+**. The `rdt` and `twitter` CLIs are optional
 — Reddix runs without them and reports their health as "Missing" (see
 [Credentials](#credentials)).
+
+## Set up credentials (quick)
+
+Reddix never asks for or stores your passwords — the provider CLIs handle auth.
+Many search/read blocks work with **no credentials at all**. Add these only when
+you want authenticated reads or Action blocks. The in-app **Credentials ↗** link
+(top bar, next to the provider pills) jumps straight to the full guide below.
+
+**Reddit** — authenticate the CLI with your browser cookies (no app/keys):
+
+```bash
+rdt login      # auto-detects your signed-in browser; rdt status to verify
+```
+
+**X/Twitter** — two cookies from a logged-in [x.com](https://x.com) session
+(DevTools → Application → Cookies → `https://x.com`), put in a local `.env`:
+
+```bash
+cp .env.example .env        # then edit .env:
+# TWITTER_AUTH_TOKEN=<the auth_token cookie value>
+# TWITTER_CT0=<the ct0 cookie value>
+```
+
+Restart the server after editing `.env`. These tokens are read at run time and
+**never written to flows, logs, run records, or the command trace**. Full steps,
+troubleshooting, and security details are in [Credentials](#credentials).
 
 ## Requirements
 

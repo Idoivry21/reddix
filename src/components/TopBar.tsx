@@ -22,6 +22,16 @@ interface TopBarProps {
 
 const IDLE_STATUS: RunStatus = { kind: 'idle', message: 'Idle' };
 
+/** Where the full credential setup steps live (README → Credentials). */
+const CREDENTIALS_DOCS_URL = 'https://github.com/Idoivry21/reddix#credentials';
+
+/** One-line setup note per provider CLI, surfaced as a pill tooltip. */
+const PROVIDER_SETUP_HINTS: Record<string, string> = {
+  rdt: 'Reddit: install rdt-cli, then run `rdt login` to authenticate.',
+  twitter:
+    'X/Twitter: install twitter-cli; set TWITTER_AUTH_TOKEN and TWITTER_CT0 in .env for auth-required blocks.'
+};
+
 export function TopBar({
   flowName = 'Untitled flow',
   onRename,
@@ -70,6 +80,16 @@ export function TopBar({
       <div className="topbar-spacer" />
 
       <ProviderHealthPills providers={providers} loading={isHealthLoading} error={hasHealthError} />
+
+      <a
+        className="provider-help"
+        href={CREDENTIALS_DOCS_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="How and where to set up Reddit & X/Twitter credentials"
+      >
+        Credentials ↗
+      </a>
 
       <RunStatusBar status={runStatus} />
 
@@ -153,6 +173,7 @@ function ProviderHealthPills({ providers, loading, error }: ProviderHealthPillsP
           className={`provider-pill ${provider.available ? 'provider-healthy' : 'provider-missing'}`}
           role="status"
           aria-label={`${provider.executable} ${provider.available ? 'healthy' : 'missing'}`}
+          title={PROVIDER_SETUP_HINTS[provider.executable]}
         >
           {provider.executable} <strong>{provider.available ? 'Healthy' : 'Missing'}</strong>
         </span>

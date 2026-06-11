@@ -3,10 +3,31 @@
   "version": "0.1.0",
   "description": "Local single-user canvas automation workbench for social CLI research, exports, and guarded actions.",
   "license": "MIT",
+  "author": "Ido Ivry",
+  "homepage": "https://github.com/Idoivry21/reddix#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Idoivry21/reddix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Idoivry21/reddix/issues"
+  },
   "type": "module",
   "bin": {
     "reddix": "bin/reddix.mjs"
   },
+  "files": [
+    "bin",
+    "THIRD_PARTY_NOTICES.md",
+    "src",
+    "server",
+    "scripts",
+    "index.html",
+    "tsconfig.json",
+    "tsconfig.app.json",
+    "tsconfig.node.json",
+    "vite.config.ts"
+  ],
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },

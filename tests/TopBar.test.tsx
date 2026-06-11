@@ -30,4 +30,29 @@ describe('TopBar provider health', () => {
     render(<TopBar lastSavedAt="Saved" onRun={vi.fn()} hasHealthError />);
     expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
   });
+
+  it('links to the credential setup docs from the top bar', () => {
+    render(<TopBar lastSavedAt="Saved" onRun={vi.fn()} />);
+    const link = screen.getByRole('link', { name: /credentials/i });
+    expect(link).toHaveAttribute('href', expect.stringContaining('#credentials'));
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('explains how to set up each provider via a pill tooltip', () => {
+    render(
+      <TopBar
+        lastSavedAt="Saved"
+        onRun={vi.fn()}
+        providers={[
+          { provider: 'reddit', executable: 'rdt', available: true },
+          { provider: 'twitter', executable: 'twitter', available: false }
+        ]}
+      />
+    );
+    expect(screen.getByLabelText('rdt healthy')).toHaveAttribute('title', expect.stringMatching(/rdt login/i));
+    expect(screen.getByLabelText('twitter missing')).toHaveAttribute(
+      'title',
+      expect.stringMatching(/TWITTER_AUTH_TOKEN/)
+    );
+  });
 });
