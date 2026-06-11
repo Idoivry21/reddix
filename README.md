@@ -8,7 +8,9 @@
 [![Node](https://img.shields.io/badge/node-20.19%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![Tests](https://img.shields.io/badge/tests-Vitest%20%2B%20Playwright-6E9F18.svg)](#testing)
 
-[Install](#install) · [Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Blocks](docs/block-reference.md) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+[Install](#install) · [Screenshots](#screenshots) · [Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Blocks](docs/block-reference.md) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+
+![Reddix workbench](docs/screenshots/workbench-light.png)
 
 </div>
 
@@ -27,6 +29,16 @@ configured for the underlying CLIs, and manual runs require an explicit
 confirmation dialog before any Action block executes.
 
 The generated block reference is in [docs/block-reference.md](docs/block-reference.md).
+
+## Screenshots
+
+The whole app is one screen: a block palette on the left, the freeform flow
+canvas in the middle, a per-block inspector with a live CLI command preview on
+the right, and a run console (logs, output preview, command trace, history)
+docked at the bottom. The hero shot above uses the light theme; the dark theme
+is below.
+
+![Reddix workbench, dark theme](docs/screenshots/workbench-dark.png)
 
 ## Project status
 
