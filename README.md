@@ -8,7 +8,7 @@
 [![Node](https://img.shields.io/badge/node-20.19%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![Tests](https://img.shields.io/badge/tests-Vitest%20%2B%20Playwright-6E9F18.svg)](#testing)
 
-[Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Blocks](docs/block-reference.md) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
+[Install](#install) · [Quick Start](#development) · [Credentials](#credentials) · [Tool choices](#current-tool-choices) · [Blocks](docs/block-reference.md) · [Outputs](#outputs-and-reports) · [Security](#security-invariants-non-negotiable) · [Spec](docs/superpowers/specs/2026-06-06-social-cli-canvas-automation-ui-design.md)
 
 </div>
 
@@ -32,6 +32,39 @@ The generated block reference is in [docs/block-reference.md](docs/block-referen
 
 Reddix is pre-1.0. Expect APIs, flow JSON, and UI details to change while the
 core local-first safety model stabilizes.
+
+## Install
+
+Reddix runs as a **single local process** — the built UI and the API are served
+together on one port. The fastest way to try it, with no clone or manual setup:
+
+```bash
+npx github:Idoivry21/reddix
+```
+
+That fetches the repo, installs dependencies, builds the UI on first run, and
+starts the server on **http://127.0.0.1:8787**. Open that URL in your browser.
+
+> `npx` runs from a temporary checkout, so flows and export artifacts written to
+> the default data dir do not persist between runs. For ongoing use, clone the
+> repo so your data lives in the project folder.
+
+### Clone and run (persistent)
+
+```bash
+git clone https://github.com/Idoivry21/reddix.git
+cd reddix
+npm install
+npm run serve
+```
+
+`npm run serve` builds the UI and serves it with the API on
+**http://127.0.0.1:8787**. Re-run it after pulling changes. Prefer a Docker
+image? See [Docker](#docker).
+
+Requires **Node.js 20.19+ or 22.12+**. The `rdt` and `twitter` CLIs are optional
+— Reddix runs without them and reports their health as "Missing" (see
+[Credentials](#credentials)).
 
 ## Requirements
 

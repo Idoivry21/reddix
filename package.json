@@ -4,6 +4,9 @@
   "description": "Local single-user canvas automation workbench for social CLI research, exports, and guarded actions.",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "reddix": "bin/reddix.mjs"
+  },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
