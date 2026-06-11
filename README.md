@@ -86,6 +86,24 @@ Reddix reads none of these values — login and the credential file live entirel
 with `rdt-cli`. The cookies grant access to your Reddit account, so keep them
 local and log out when you no longer need authenticated reads.
 
+**If auto-detection fails** (e.g. an unsupported browser, or a `"database is
+locked"` error), try these in order:
+
+1. Confirm you are actually signed in to [reddit.com](https://www.reddit.com) in
+   one of the supported browsers, then **fully close that browser** to release
+   its cookie-database lock and run `rdt login` again.
+2. Extract the cookies manually from your browser:
+   - Open **DevTools → Application/Storage → Cookies → `https://www.reddit.com`**.
+   - Locate the Reddit session cookies — typically **`reddit_session`** and the
+     newer **`token_v2`** (some flows also use `loid`/`edgebucket`).
+   - Copy their values.
+3. Hand those cookies to `rdt-cli` the way its docs describe. `rdt-cli` does not
+   expose a documented manual-entry flag in Reddix; the credential file lives at
+   `~/.config/rdt-cli/credential.json`, so consult the
+   [`rdt-cli` README / issues](https://github.com/public-clis/rdt-cli) for the
+   exact file format before editing it by hand. Reddix never reads or writes this
+   file.
+
 ### X/Twitter (`twitter-cli`)
 
 X/Twitter access goes through
