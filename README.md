@@ -67,22 +67,24 @@ developer policies.
 ### Reddit (`rdt-cli`)
 
 Reddit access goes through [`rdt-cli`](https://github.com/public-clis/rdt-cli),
-which uses Reddit's official API. Follow that project's setup instructions for
-the authoritative steps; the typical flow is:
+which authenticates with **browser cookies** — no Reddit app, client ID, or
+client secret is involved. Follow that project's docs for the authoritative
+steps; the typical flow is:
 
-1. Sign in at [reddit.com](https://www.reddit.com) and open
-   **[reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)**.
-2. Click **Create app** (or **Create another app**) and choose the **script**
-   app type for personal, read-only use.
-3. Set the redirect URI to `http://localhost:8080` (or whatever the CLI's docs
-   specify), then create the app.
-4. Copy the generated **client ID** (under the app name) and **client secret**.
-5. Provide them to `rdt-cli` using its own configuration/login command or the
-   environment variables it documents. Reddix reads none of these values — they
-   live entirely with the CLI.
+1. Open any supported browser (Chrome, Firefox, Edge, or Brave), go to
+   **[reddit.com](https://www.reddit.com)**, and sign in to your account.
+2. Run **`rdt login`**. The CLI auto-detects your installed browsers and extracts
+   the Reddit session cookies — it tries each browser in turn and uses the first
+   with valid cookies.
+3. Credentials are stored by the CLI at `~/.config/rdt-cli/credential.json`.
+   Saved cookies are valid for ~7 days by default and are refreshed from the
+   browser automatically when they expire.
+4. Check status with **`rdt status`** (or `rdt whoami`), and clear stored
+   credentials with **`rdt logout`**.
 
-Public read-only Reddit endpoints may work without credentials, but supplying
-your own app keeps you within Reddit's rate limits and API terms.
+Reddix reads none of these values — login and the credential file live entirely
+with `rdt-cli`. The cookies grant access to your Reddit account, so keep them
+local and log out when you no longer need authenticated reads.
 
 ### X/Twitter (`twitter-cli`)
 
