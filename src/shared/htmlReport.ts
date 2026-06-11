@@ -1,4 +1,5 @@
 import { PROVIDER_META } from './providers';
+import { REDDIT_LOGO_DATA_URI } from './redditLogo';
 import type { SocialItem } from './types';
 import { safeHref } from './urlSafety';
 import { coerceFiniteNumber } from './values';
@@ -34,16 +35,16 @@ const PLATFORM_LABEL: Record<SocialItem['platform'], string> = {
 };
 
 // Brand marks are inlined as static SVG (no untrusted input), so they need no
-// escaping. `fill="currentColor"` lets CSS tint each mark per context.
-const REDDIT_LOGO =
-  '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/></svg>';
+// escaping. `fill="currentColor"` lets CSS tint each mark per context. The
+// Reddit Snoo is a full-color raster (REDDIT_LOGO_DATA_URI) painted as a CSS
+// background, so its badge/stat slots carry no inline markup here.
 const X_LOGO =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>';
 const REDDIX_MARK =
   '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="7" r="2.4"/><circle cx="6" cy="17" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.3 7h3.2a3 3 0 0 1 3 3M8.3 17h3.2a3 3 0 0 0 3-3"/></svg>';
 
 const PLATFORM_LOGO: Record<SocialItem['platform'], string> = {
-  reddit: REDDIT_LOGO,
+  reddit: '',
   twitter: X_LOGO
 };
 
@@ -87,7 +88,7 @@ export function serializeHtml(items: SocialItem[], meta: HtmlReportMeta): string
   </div>
   <div class="stats">
     <span class="stat stat-total"><b>${total}</b> ${total === 1 ? 'result' : 'results'}</span>
-    <span class="stat stat-reddit"><span class="stat-logo">${REDDIT_LOGO}</span><b>${redditCount}</b> reddit</span>
+    <span class="stat stat-reddit"><span class="stat-logo"></span><b>${redditCount}</b> reddit</span>
     <span class="stat stat-x"><span class="stat-logo">${X_LOGO}</span><b>${twitterCount}</b> x</span>
   </div>
   <div class="controls">
@@ -237,7 +238,7 @@ function parseDate(iso: string): { display: string; epoch: number } {
 }
 
 const STYLES = `
-:root{--bg:#0a0c11;--panel:#141821;--panel-2:#1a1f2b;--line:#232a38;--line-hi:#33405a;--text:#e8ebf2;--muted:#8c95a8;--muted-2:#aeb6c7;--reddit:#ff4500;--x:#1d9bf0;--accent:#7c9cff;--radius:14px;--shadow:0 1px 2px rgba(0,0,0,.45),0 12px 28px -16px rgba(0,0,0,.7)}
+:root{--bg:#0a0c11;--panel:#141821;--panel-2:#1a1f2b;--line:#232a38;--line-hi:#33405a;--text:#e8ebf2;--muted:#8c95a8;--muted-2:#aeb6c7;--reddit:#ff4500;--x:#1d9bf0;--accent:#7c9cff;--radius:14px;--shadow:0 1px 2px rgba(0,0,0,.45),0 12px 28px -16px rgba(0,0,0,.7);--reddit-logo:url("${REDDIT_LOGO_DATA_URI}")}
 *{box-sizing:border-box}
 html{color-scheme:dark}
 body{margin:0;background:radial-gradient(1200px 620px at 82% -12%,#1a2030 0,var(--bg) 58%) fixed;color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
@@ -256,7 +257,7 @@ svg{display:block}
 .stat b{color:var(--text);font-weight:680;font-size:13.5px}
 .stat-logo{display:grid;place-items:center;width:15px;height:15px}
 .stat-logo svg{width:100%;height:100%}
-.stat-reddit .stat-logo{color:var(--reddit)}
+.stat-reddit .stat-logo{background:var(--reddit-logo) center/cover no-repeat;border-radius:4px}
 .stat-reddit b{color:var(--reddit)}
 .stat-x .stat-logo{color:var(--text)}
 .stat-x b{color:var(--x)}
@@ -276,7 +277,7 @@ svg{display:block}
 .card-head{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted)}
 .badge{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;color:#fff;flex:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
 .badge svg{width:16px;height:16px}
-.badge-reddit{background:var(--reddit)}
+.badge-reddit{background:var(--reddit-logo) center/cover no-repeat}
 .badge-twitter{background:#000;box-shadow:inset 0 0 0 1px #2c3340}
 .handle{color:var(--text);font-weight:560;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card-date{margin-left:auto;color:var(--muted);font-size:11.5px;white-space:nowrap;flex:none}
