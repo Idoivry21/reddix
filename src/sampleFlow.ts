@@ -11,8 +11,9 @@ function edge(source: string, target: string): WorkbenchEdge {
 
 /**
  * Starter "weekly market digest" flow, laid out left-to-right like the design's
- * sample: two sources → per-stream filters → merge → sort → limit → CSV + JSON.
- * All ports are SocialItem[] so the flow validates and runs end to end.
+ * sample: two sources → per-stream filters → merge → sort → limit → CSV + JSON +
+ * a self-contained HTML report (the showcase terminal). All ports are
+ * SocialItem[] so the flow validates and runs end to end.
  */
 export function createSampleNodes(): WorkbenchNode[] {
   return [
@@ -23,8 +24,9 @@ export function createSampleNodes(): WorkbenchNode[] {
     node('merge', 'transform.mergeStreams', 'Merge Streams', 660, 300),
     node('sort', 'transform.sortLocal', 'Sort Local', 940, 300),
     node('limit', 'transform.limit', 'Limit', 1220, 300),
-    node('export-csv', 'output.exportCsv', 'Export CSV', 1500, 180),
-    node('export-json', 'output.exportJson', 'Export JSON', 1500, 430)
+    node('export-html', 'output.exportHtml', 'Export HTML Report', 1500, 120),
+    node('export-csv', 'output.exportCsv', 'Export CSV', 1500, 300),
+    node('export-json', 'output.exportJson', 'Export JSON', 1500, 480)
   ];
 }
 
@@ -36,6 +38,7 @@ export function createSampleEdges(): WorkbenchEdge[] {
     edge('twitter-filter', 'merge'),
     edge('merge', 'sort'),
     edge('sort', 'limit'),
+    edge('limit', 'export-html'),
     edge('limit', 'export-csv'),
     edge('limit', 'export-json')
   ];

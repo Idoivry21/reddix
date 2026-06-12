@@ -234,9 +234,11 @@ stream are all served from the same origin, so no proxy is needed in production.
 
 Output artifacts are written under `REDDIX_DATA_DIR/artifacts/` with timestamped
 filenames so repeated scheduled runs do not overwrite previous results.
-`output.exportHtml` creates a styled, self-contained HTML report. When a run
-produces one, the console shows an "Open report" link served by
-`GET /api/artifacts/*`.
+`output.exportHtml` creates a styled, self-contained HTML report — the terminal
+export of the bundled starter flow. When a run produces one, the console shows
+an "Open report" link served by `GET /api/artifacts/*`.
+
+![Reddix HTML report](docs/screenshots/html-report.png)
 
 `output.webhook` sends the same normalized result set to an HTTPS endpoint. It
 POSTs `{ flowName, runId, count, items }` as JSON and acts as a terminal sink:
